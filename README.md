@@ -64,19 +64,100 @@ DEV_CLIENT_PORT=5173
 PUID=1000
 PGID=1000
 
-HOST_CONFIG_PATH=/mnt/user/appdata/video-organizer
-HOST_INPUT_PATH=/mnt/user/downloads/staging
-HOST_OUTPUT_MOVIES_PATH=/mnt/user/media/Movies
-HOST_OUTPUT_DOCUMENTARIES_PATH=/mnt/user/media/Documentaries
-HOST_OUTPUT_ANIMATED_MOVIES_PATH=/mnt/user/media/Animated Movies
-HOST_OUTPUT_TV_SHOWS_PATH=/mnt/user/media/TV Shows
-HOST_OUTPUT_ANIMATED_SERIES_PATH=/mnt/user/media/Animated Series
+CONFIG_DIR=/mnt/user/appdata/video-organizer
+INPUT_DIR=/mnt/user/downloads/staging
+BACKUP_DIR=/mnt/user/downloads/backup
+OUTPUT_MOVIES_DIR=/mnt/user/media/Movies
+OUTPUT_ANIMATED_MOVIES_DIR=/mnt/user/media/Animated Movies
+OUTPUT_TV_SHOWS_DIR=/mnt/user/media/TV Shows
+OUTPUT_ANIMATED_SERIES_DIR=/mnt/user/media/Animated Series
 
 OMDB_API_KEY=your_omdb_key
 TVDB_API_KEY=your_tvdb_key
 ```
 
 ## Running with Docker Compose
+
+### Option A: Prebuilt Image (Arcane, Container Station, Portainer — No Git Required)
+
+GitHub Actions automatically builds and publishes multi-architecture images (`linux/amd64`, `linux/arm64`) to `ghcr.io/francogp/video-organizer:latest` on every push to `main` or release tag `v*`. You do **not** need `git` or local compilation on your NAS.
+
+#### Complete `compose.yaml`
+
+```yaml
+services:
+  video-organizer:
+    image: ghcr.io/francogp/video-organizer:latest
+    container_name: plex-video-organizer
+    user: '${PUID:-1000}:${PGID:-1000}'
+    restart: unless-stopped
+    ports:
+      - '${APP_PORT:-3000}:${APP_PORT:-3000}'
+    environment:
+      APP_PORT: '${APP_PORT:-3000}'
+      OMDB_API_KEY: '${OMDB_API_KEY:-}'
+      TVDB_API_KEY: '${TVDB_API_KEY:-}'
+      CONFIG_DIR: /config
+      INPUT_DIR: /data/input
+      BACKUP_DIR: /data/backup
+      OUTPUT_MOVIES_DIR: /data/output/movies
+      OUTPUT_ANIMATED_MOVIES_DIR: /data/output/animated-movies
+      OUTPUT_TV_SHOWS_DIR: /data/output/tv-shows
+      OUTPUT_ANIMATED_SERIES_DIR: /data/output/animated-series
+    volumes:
+      - '${CONFIG_DIR:-./data/config}:/config'
+      - '${INPUT_DIR:-./data/input}:/data/input'
+      - '${BACKUP_DIR:-./data/backup}:/data/backup'
+      - '${OUTPUT_MOVIES_DIR:-./data/output/movies}:/data/output/movies'
+      - '${OUTPUT_ANIMATED_MOVIES_DIR:-./data/output/animated-movies}:/data/output/animated-movies'
+      - '${OUTPUT_TV_SHOWS_DIR:-./data/output/tv-shows}:/data/output/tv-shows'
+      - '${OUTPUT_ANIMATED_SERIES_DIR:-./data/output/animated-series}:/data/output/animated-series'
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          "fetch('http://127.0.0.1:' + (process.env.APP_PORT || '3000') + '/api/state').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 5s
+```
+
+#### Complete `.env` Example (NAS / Arcane)
+
+```dotenv
+APP_PORT=3000
+PUID=1000
+PGID=100
+
+# Host folders (QNAP /share/... paths)
+CONFIG_DIR=/share/Container/video-organizer/config
+INPUT_DIR=/share/Download/ACOMODAR
+BACKUP_DIR=/share/Download/ACOMODAR [backup]
+OUTPUT_MOVIES_DIR=/share/Multimedia/Movies/Regular
+OUTPUT_ANIMATED_MOVIES_DIR=/share/Multimedia/Movies/Animation
+OUTPUT_TV_SHOWS_DIR=/share/Multimedia/TV Shows/Regular
+OUTPUT_ANIMATED_SERIES_DIR=/share/Multimedia/TV Shows/Animation
+
+# Optional Metadata API Keys (IMDb Suggestions and TVmaze work without keys)
+OMDB_API_KEY=
+TVDB_API_KEY=
+```
+
+#### Deploying & Updating with Arcane
+
+1. Open **Arcane** in your browser and create a new **Project / Stack** (for example `plex-video-organizer`).
+2. Paste the **`compose.yaml`** above into the Compose editor.
+3. Paste the **`.env`** variables above into the **Environment (`.env`)** section, adjusting `PUID`, `PGID`, and your host folder paths.
+4. Click **Deploy / Up**. Open `http://<NAS-LAN-IP>:3000` in your browser.
+5. **To update later**: click **Pull** (or **Update / Redeploy**) in Arcane to fetch the latest `ghcr.io/francogp/video-organizer:latest` image.
+
+> **Private vs. Public GHCR Package**: When the GitHub package is **Public**, Arcane and Docker pull it without authentication. If you keep the package **Private**, create a GitHub Personal Access Token with `read:packages` and add `ghcr.io` credentials once under **Arcane -> Settings -> Registries** (or run `docker login ghcr.io` on the host).
+
+### Option B: Build from Source (Local Clone)
 
 ```bash
 cp .env.example .env
@@ -160,37 +241,31 @@ Keep app configuration on your Container/SSD share and keep staging, backup, and
 
 ### 4. Example QNAP `.env` and Startup
 
-```bash
-cd /share/Container/video-organizer/app
-cp .env.example .env
-```
-
-Set `.env` using your resolved `PUID`/`PGID` and `/share/...` paths:
+With the prebuilt GHCR image, you do not need `git` on QNAP: paste the `compose.yaml` and `.env` from **Option A** above into **Arcane** or **Container Station -> Applications -> Create**, or create `/share/Container/video-organizer/compose.yaml` and `/share/Container/video-organizer/.env` via SSH:
 
 ```dotenv
 APP_PORT=3000
-DEV_CLIENT_PORT=5173
-
 PUID=1000
 PGID=100
 
-HOST_CONFIG_PATH=/share/Container/video-organizer/config
-HOST_INPUT_PATH=/share/Media/Staging
-HOST_BACKUP_PATH=/share/Media/Backup
-HOST_OUTPUT_MOVIES_PATH=/share/Media/Movies
-HOST_OUTPUT_DOCUMENTARIES_PATH=/share/Media/Documentaries
-HOST_OUTPUT_ANIMATED_MOVIES_PATH=/share/Media/Animated Movies
-HOST_OUTPUT_TV_SHOWS_PATH=/share/Media/TV Shows
-HOST_OUTPUT_ANIMATED_SERIES_PATH=/share/Media/Animated Series
+CONFIG_DIR=/share/Container/video-organizer/config
+INPUT_DIR=/share/Download/ACOMODAR
+BACKUP_DIR=/share/Download/ACOMODAR [backup]
+OUTPUT_MOVIES_DIR=/share/Multimedia/Movies/Regular
+OUTPUT_ANIMATED_MOVIES_DIR=/share/Multimedia/Movies/Animation
+OUTPUT_TV_SHOWS_DIR=/share/Multimedia/TV Shows/Regular
+OUTPUT_ANIMATED_SERIES_DIR=/share/Multimedia/TV Shows/Animation
 
 OMDB_API_KEY=your_omdb_key
 TVDB_API_KEY=your_tvdb_key
 ```
 
-Build and start the container:
+Start (or update) the container without building locally:
 
 ```bash
-docker compose up -d --build
+cd /share/Container/video-organizer
+docker compose pull
+docker compose up -d
 ```
 
 Then open `http://<QNAP-LAN-IP>:3000` in your browser. (You can also manage or inspect the running `plex-video-organizer` stack from **Container Station -> Containers**.)

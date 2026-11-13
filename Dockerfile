@@ -1,3 +1,19 @@
+FROM node:26-alpine AS builder
+
+RUN apk add --no-cache git \
+  && npm install -g npm@latest \
+  && git config --global url."https://github.com/".insteadOf "ssh://git@github.com/" \
+  && git config --global url."https://github.com/".insteadOf "git@github.com:"
+
+WORKDIR /app
+
+COPY package.json package-lock.json .npmrc ./
+RUN npm ci
+
+COPY index.html tsconfig.json vite.config.ts vite.plugins.ts ./
+COPY src ./src
+RUN ./node_modules/.bin/vp build
+
 FROM node:26-alpine AS runtime
 
 RUN apk add --no-cache ffmpeg ca-certificates
@@ -10,7 +26,7 @@ ENV APP_PORT=3000
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev
 
-COPY dist ./dist
+COPY --from=builder /app/dist ./dist
 COPY src ./src
 COPY tsconfig.json ./tsconfig.json
 

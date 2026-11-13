@@ -9,6 +9,7 @@ Project Maintainers and DevOps Agents.
 ## Local Contracts
 
 - Scripts must remain idempotent, use `set -euo pipefail`, and never embed hardcoded secrets or external project names.
+- Multi-stage `Dockerfile` `builder` must install `git` and `npm@latest` (`>= 12.2.2`), copy `.npmrc` (`allow-git=all`), and rewrite `ssh://git@github.com/` to `https://github.com/` so `npm ci` can resolve public Git devDependencies like `@francogp/auditor` in CI without SSH keys.
 
 ## Work Guidance
 
