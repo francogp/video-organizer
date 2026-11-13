@@ -1,0 +1,26 @@
+{
+  "$schema": "https://fallow.tools/schema/config.json",
+  "entry": ["src/index.ts", "src/client/main.ts"],
+  "ignorePatterns": ["tests/**", ".agents/**", ".auditor/**"],
+  "duplicates": {
+    "nearMiss": true,
+    "mode": "strict"
+  },
+  "health": {
+    "maxCrap": 0,
+    "maxCyclomatic": 25,
+    "maxCognitive": 20,
+    "cyclomaticPolicy": "standard"
+  },
+  "ignoreExports": [
+    {
+      "file": "src/domain/plexFormatter.ts",
+      "exports": ["sanitizePlexSegment", "formatEditionTag"]
+    },
+    {
+      "file": "src/server/services/preflight.ts",
+      "exports": ["computeProjectedDestination"]
+    }
+  ],
+  "ignoreDependencies": ["@vue/test-utils"]
+}

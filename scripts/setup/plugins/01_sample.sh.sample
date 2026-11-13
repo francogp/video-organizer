@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# Project-specific initialization plugin (Linux/macOS)
+# Place post-install tasks here (e.g. copy templates, configure DB)
+# echo "Running local configuration plugin..."

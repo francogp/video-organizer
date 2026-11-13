@@ -1,0 +1,39 @@
+services:
+  video-organizer:
+    build: .
+    container_name: plex-video-organizer
+    user: '${PUID:-1000}:${PGID:-1000}'
+    restart: unless-stopped
+    ports:
+      - '${APP_PORT:-3000}:${APP_PORT:-3000}'
+    environment:
+      APP_PORT: '${APP_PORT:-3000}'
+      OMDB_API_KEY: '${OMDB_API_KEY:-}'
+      TVDB_API_KEY: '${TVDB_API_KEY:-}'
+      CONFIG_DIR: /config
+      INPUT_DIR: /data/input
+      BACKUP_DIR: /data/backup
+      OUTPUT_MOVIES_DIR: /data/output/movies
+      OUTPUT_ANIMATED_MOVIES_DIR: /data/output/animated-movies
+      OUTPUT_TV_SHOWS_DIR: /data/output/tv-shows
+      OUTPUT_ANIMATED_SERIES_DIR: /data/output/animated-series
+    volumes:
+      - '${CONFIG_DIR:-./data/config}:/config'
+      - '${INPUT_DIR:-./data/input}:/data/input'
+      - '${BACKUP_DIR:-./data/backup}:/data/backup'
+      - '${OUTPUT_MOVIES_DIR:-./data/output/movies}:/data/output/movies'
+      - '${OUTPUT_ANIMATED_MOVIES_DIR:-./data/output/animated-movies}:/data/output/animated-movies'
+      - '${OUTPUT_TV_SHOWS_DIR:-./data/output/tv-shows}:/data/output/tv-shows'
+      - '${OUTPUT_ANIMATED_SERIES_DIR:-./data/output/animated-series}:/data/output/animated-series'
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          "fetch('http://127.0.0.1:' + (process.env.APP_PORT || '3000') + '/api/state').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 5s

@@ -1,0 +1,6 @@
+# Ignored files and dependencies for Docker image builds
+node_modules
+.git
+scratch
+.env*
+*.log

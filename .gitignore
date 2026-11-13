@@ -1,0 +1,16 @@
+# Auditor tool caches (Added by @francogp/auditor)
+node_modules/
+scratch/
+*.log
+dist/
+.fallow
+.oxlintcache
+.stylelintcache
+.stylelintcache
+coverage/
+.vitest-cache
+test-results/
+.tsbuildinfo
+dist/
+dev-dist/
+.env

@@ -1,0 +1,76 @@
+:root {
+  --vo-bg: oklch(17% 0.014 255deg);
+  --vo-surface: oklch(22% 0.016 255deg);
+  --vo-surface-elevated: oklch(27% 0.018 255deg);
+  --vo-border: oklch(34% 0.018 255deg);
+  --vo-text: oklch(93% 0.01 255deg);
+  --vo-text-muted: oklch(72% 0.014 255deg);
+  --vo-accent: oklch(72% 0.16 68deg);
+  --vo-accent-contrast: oklch(18% 0.02 68deg);
+  --vo-success: oklch(70% 0.15 150deg);
+  --vo-warning: oklch(76% 0.15 80deg);
+  --vo-danger: oklch(64% 0.2 25deg);
+  --vo-font-sans: 'IBM Plex Sans', 'Segoe UI', system-ui, sans-serif;
+  --vo-font-mono: 'IBM Plex Mono', ui-monospace, monospace;
+  --vo-text-xs: 0.75rem;
+  --vo-text-sm: 0.8125rem;
+  --vo-text-md: 0.875rem;
+  --vo-text-lg: 1.25rem;
+  --vo-weight-semibold: 600;
+  --vo-space-1: 0.25rem;
+  --vo-space-2: 0.5rem;
+  --vo-space-3: 0.75rem;
+  --vo-space-4: 1rem;
+  --vo-space-5: 1.25rem;
+  --vo-radius-sm: 5px;
+  --vo-radius-md: 8px;
+  --vo-radius-lg: 10px;
+  --vo-radius-pill: 999px;
+  --vo-backdrop: color-mix(in oklch, black 65%, transparent);
+  --vo-bg-gradient:
+    radial-gradient(1200px 520px at 15% -10%, oklch(27% 0.045 250deg / 55%), transparent 60%),
+    radial-gradient(900px 440px at 90% 0%, oklch(30% 0.05 68deg / 28%), transparent 55%),
+    linear-gradient(180deg, oklch(19% 0.016 255deg), var(--vo-bg));
+  --vo-surface-gradient: linear-gradient(
+    180deg,
+    color-mix(in oklch, var(--vo-surface-elevated) 45%, var(--vo-surface)),
+    var(--vo-surface)
+  );
+  --vo-accent-gradient: linear-gradient(
+    135deg,
+    var(--vo-accent),
+    color-mix(in oklch, var(--vo-accent) 76%, oklch(82% 0.14 82deg))
+  );
+  --vo-border-highlight: color-mix(in oklch, var(--vo-accent) 36%, var(--vo-border));
+  --vo-shadow-panel: 0 10px 28px color-mix(in oklch, black 28%, transparent);
+
+  color-scheme: dark;
+}
+
+:root[data-theme='light'] {
+  --vo-bg: oklch(97% 0.006 255deg);
+  --vo-surface: oklch(100% 0 0deg);
+  --vo-surface-elevated: oklch(94% 0.008 255deg);
+  --vo-border: oklch(86% 0.012 255deg);
+  --vo-text: oklch(20% 0.015 255deg);
+  --vo-text-muted: oklch(46% 0.016 255deg);
+  --vo-accent: oklch(58% 0.17 65deg);
+  --vo-accent-contrast: oklch(98% 0 0deg);
+  --vo-success: oklch(50% 0.15 150deg);
+  --vo-warning: oklch(58% 0.16 75deg);
+  --vo-danger: oklch(54% 0.2 25deg);
+  --vo-bg-gradient:
+    radial-gradient(1200px 520px at 15% -10%, oklch(90% 0.03 250deg / 55%), transparent 60%),
+    radial-gradient(900px 440px at 90% 0%, oklch(92% 0.04 70deg / 35%), transparent 55%),
+    linear-gradient(180deg, oklch(99% 0.004 255deg), var(--vo-bg));
+  --vo-surface-gradient: linear-gradient(180deg, var(--vo-surface), var(--vo-surface-elevated));
+  --vo-accent-gradient: linear-gradient(
+    135deg,
+    var(--vo-accent),
+    color-mix(in oklch, var(--vo-accent) 78%, oklch(68% 0.16 78deg))
+  );
+  --vo-border-highlight: color-mix(in oklch, var(--vo-accent) 42%, var(--vo-border));
+  --vo-shadow-panel: 0 10px 24px color-mix(in oklch, oklch(20% 0.02 255deg) 10%, transparent);
+
+  color-scheme: light;
+}

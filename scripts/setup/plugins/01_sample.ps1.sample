@@ -1,0 +1,3 @@
+# Project-specific initialization plugin (Windows)
+# Place post-install tasks here (e.g. copy templates, configure DB)
+# Write-Host "Running local configuration plugin..." -ForegroundColor Cyan

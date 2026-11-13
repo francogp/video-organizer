@@ -1,0 +1,47 @@
+{
+  "schemaVersion": 1,
+  "warnings": [
+    {
+      "fingerprint": "026d2b22fdf592f1",
+      "suiteId": "validate_test_coverage",
+      "ruleId": "test-coverage-untracked-files",
+      "file": "src/client/components/VerifierView.vue"
+    },
+    {
+      "fingerprint": "590c4483e95307b0",
+      "suiteId": "validate_test_coverage",
+      "ruleId": "test-coverage-untracked-files",
+      "file": "src/client/components/ConflictResolutionModal.vue"
+    },
+    {
+      "fingerprint": "59fe1637e07c0115",
+      "suiteId": "validate_test_coverage",
+      "ruleId": "test-coverage-untracked-files",
+      "file": "src/client/App.vue"
+    },
+    {
+      "fingerprint": "741bf52cd2e60690",
+      "suiteId": "validate_test_coverage",
+      "ruleId": "test-coverage-untracked-files",
+      "file": "src/client/components/MetadataSearchModal.vue"
+    },
+    {
+      "fingerprint": "9caa4882b18b9767",
+      "suiteId": "validate_test_coverage",
+      "ruleId": "test-coverage-untracked-files",
+      "file": "src/client/components/TrackInspectorModal.vue"
+    },
+    {
+      "fingerprint": "b5a6c1eec2942d6a",
+      "suiteId": "validate_test_coverage",
+      "ruleId": "test-coverage-untracked-files",
+      "file": "src/client/components/QueueTable.vue"
+    },
+    {
+      "fingerprint": "fd82b46b131c8b4d",
+      "suiteId": "validate_test_coverage",
+      "ruleId": "test-coverage-untracked-files",
+      "file": "src/client/components/table/VirtualDataTable.vue"
+    }
+  ]
+}
