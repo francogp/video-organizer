@@ -15,6 +15,7 @@ A self-hosted, Dockerized NAS media organizer that scans staging video folders, 
 
 - **Production (Docker)**: Docker Engine and Docker Compose v2.
 - **Local Development**: Node.js `>= 26.0.0`, `ffmpeg`, and `ffprobe` available in `PATH`.
+- **Network & Security Scope (LAN Only)**: Designed strictly for trusted local area networks (LAN). The web console and `/api/*` endpoints do not enforce HTTP authentication (`X-Client-Id` is only an optimistic collaborative lock) — never expose `APP_PORT` directly to the public Internet without an authenticating reverse proxy.
 
 ## Configuration (`.env`)
 

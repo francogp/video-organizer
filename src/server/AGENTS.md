@@ -11,6 +11,7 @@ Backend Maintainers.
 - All relative imports use `.ts` extensions for native Node.js 26 type-stripping execution.
 - All `ffmpeg`/`ffprobe` invocations use `node:child_process.spawn` with argument arrays (no shell).
 - Directory traversal uses Node.js 26 native `fs.readdir(..., { recursive: true })`.
+- Designed strictly for trusted LAN deployments: `X-Client-Id` provides an optimistic collaborative session lock rather than HTTP authentication, so the server must not be exposed directly to untrusted networks without an authenticating reverse proxy.
 
 ## Key Files
 
