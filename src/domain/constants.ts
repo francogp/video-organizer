@@ -414,3 +414,120 @@ export const METADATA_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 export const METADATA_MAX_RETRIES = 2;
 export const METADATA_RETRY_BASE_MS = 500;
 export const METADATA_RETRY_MAX_MS = 30_000;
+
+const PLEX_DIRECTIVE_FILE_MAP = {
+  '.plexignore': true,
+  '.plexmatch': true
+} as const;
+
+const NAS_AND_OS_SYSTEM_NAME_MAP = {
+  '@eadir': true,
+  '@recycle': true,
+  '@transcode': true,
+  '@sharebin': true,
+  '#recycle': true,
+  '#snapshot': true,
+  '$recycle.bin': true,
+  'system volume information': true,
+  'lost+found': true,
+  'thumbs.db': true,
+  'ehthumbs.db': true,
+  'desktop.ini': true
+} as const;
+
+/** Download-client temporary suffixes indicating an active in-progress transfer. */
+const ACTIVE_PARTIAL_DOWNLOAD_SUFFIXES = [
+  '.!qb',
+  '.!ut',
+  '.bc!',
+  '.part',
+  '.partial',
+  '.crdownload',
+  '.download',
+  '.opdownload',
+  '.aria2',
+  '.filepart'
+] as const;
+
+const TRANSIENT_TEMP_SUFFIXES = [
+  '.tmp',
+  '.temp',
+  '.bak',
+  '.tmp.mkv',
+  '.part.mkv',
+  '.partial.mkv'
+] as const;
+
+export const CASE_TMP_SUFFIX = '.__vo_case_tmp__';
+
+const INTERNAL_TEMP_MARKERS = [
+  ORGANIZING_TEMP_MARKER,
+  '.vo-staging.',
+  '.vo-case-tmp-',
+  CASE_TMP_SUFFIX
+] as const;
+
+const PERMISSION_ERROR_CODE_MAP = {
+  EACCES: true,
+  EPERM: true,
+  EROFS: true
+} as const;
+
+function hasAnySuffix(lower: string, suffixes: readonly string[]): boolean {
+  for (const suffix of suffixes) {
+    if (lower.endsWith(suffix)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function hasAnySubstring(lower: string, markers: readonly string[]): boolean {
+  for (const marker of markers) {
+    if (lower.includes(marker)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/** Returns `true` when `name` ends with a known active download-client partial suffix. */
+export function isActivePartialDownloadName(name: string): boolean {
+  const lower = name.toLowerCase();
+  return hasAnySuffix(lower, ACTIVE_PARTIAL_DOWNLOAD_SUFFIXES);
+}
+
+/**
+ * Identifies hidden dotfiles/dirs (`.@__thumb`, `.DS_Store`, `._*`), NAS system folders
+ * (`@eaDir`, `@Recycle`, `#recycle`), and temporary/partial files while preserving Plex directives.
+ */
+export function isHiddenOrTempEntryName(name: string): boolean {
+  if (!name) {
+    return false;
+  }
+  const lower = name.toLowerCase();
+  if (Object.hasOwn(PLEX_DIRECTIVE_FILE_MAP, lower)) {
+    return false;
+  }
+  if (name.startsWith('.') || name.startsWith('~$') || name.endsWith('~')) {
+    return true;
+  }
+  if (Object.hasOwn(NAS_AND_OS_SYSTEM_NAME_MAP, lower)) {
+    return true;
+  }
+  if (hasAnySubstring(lower, INTERNAL_TEMP_MARKERS)) {
+    return true;
+  }
+  return (
+    hasAnySuffix(lower, TRANSIENT_TEMP_SUFFIXES) ||
+    hasAnySuffix(lower, ACTIVE_PARTIAL_DOWNLOAD_SUFFIXES)
+  );
+}
+
+/** Checks whether a caught filesystem error indicates permission-denied or read-only storage. */
+export function isPermissionOrReadOnlyError(err: unknown): boolean {
+  if (typeof err !== 'object' || err === null || !('code' in err)) {
+    return false;
+  }
+  return typeof err.code === 'string' && Object.hasOwn(PERMISSION_ERROR_CODE_MAP, err.code);
+}

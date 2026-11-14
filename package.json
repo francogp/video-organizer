@@ -1,5 +1,6 @@
 {
-  "version": "1.0.2-build.20261113-212318",
+  "name": "plex-video-organizer",
+  "version": "1.0.3-build.20261114-020828",
   "type": "module",
   "scripts": {
     "check": "npm run auditor:lint",
@@ -146,7 +147,7 @@
     "vue": "^3.5.45"
   },
   "devDependencies": {
-    "@francogp/auditor": "github:francogp/auditor#v10.11.6",
+    "@francogp/auditor": "github:francogp/auditor#v10.12.3",
     "@types/node": "^26.6.6",
     "@vitejs/plugin-vue": "^6.0.11",
     "@vitest/coverage-v8": "^5.1.0",
@@ -154,7 +155,7 @@
     "citty": "^0.2.2",
     "happy-dom": "^21.0.4",
     "sass": "^1.108.2",
-    "vite-plus": "^1.5.1"
+    "vite-plus": "^1.6.0"
   },
   "overrides": {
     "js-yaml": "^5.5.0",

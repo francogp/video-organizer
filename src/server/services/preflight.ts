@@ -2,7 +2,7 @@ import type { Dirent } from 'node:fs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
-import { VIDEO_EXTENSION_SET } from '../../domain/constants.ts';
+import { VIDEO_EXTENSION_SET, isHiddenOrTempEntryName } from '../../domain/constants.ts';
 import {
   formatMovieRelativePath,
   formatTvRelativePath,
@@ -103,7 +103,9 @@ async function findExistingCollision(item: ScannedItem, dest: string): Promise<s
   const videoExtensions: ReadonlySet<string> = VIDEO_EXTENSION_SET;
   const videoFiles = entries.filter(
     (entry): boolean =>
-      entry.isFile() && videoExtensions.has(path.extname(entry.name).toLowerCase())
+      entry.isFile() &&
+      !isHiddenOrTempEntryName(entry.name) &&
+      videoExtensions.has(path.extname(entry.name).toLowerCase())
   );
   if (videoFiles.length === 0) {
     return null;

@@ -51,6 +51,122 @@ describe('organizerStore', () => {
     expect(fetchSpy).toHaveBeenCalledTimes(1);
   });
 
+  it('serializes concurrent preflight and patchItem calls in FIFO order and auto-retries once on 409 STALE_REVISION without setting errorMessage', async () => {
+    const store = useOrganizerStore();
+    const itemPayload = {
+      id: asItemId('ep-1'),
+      sourcePath: '/in/Show.S01E01.mkv',
+      relativePath: 'Show.S01E01.mkv',
+      fileName: 'Show.S01E01.mkv',
+      mediaKind: 'movie',
+      category: 'movies',
+      include: true,
+      parsedTitle: 'Show',
+      tags: [],
+      episodeOrder: 'aired',
+      probe: {
+        formatName: 'matroska',
+        durationSeconds: 100,
+        sizeBytes: 100,
+        bitrateBps: 100,
+        videoStreams: [],
+        audioStreams: [],
+        subtitleStreams: []
+      },
+      externalSubtitles: [],
+      candidates: [],
+      trackSelection: {
+        audioTracks: [],
+        subtitleMergeMode: 'keep-and-add',
+        includedInternalSubtitles: [],
+        externalSubtitleOrder: [],
+        needsUserPrompt: false
+      },
+      warnings: []
+    };
+
+    const seenRevisions: number[] = [];
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+      if (url.endsWith('/api/state')) {
+        return new Response(JSON.stringify(makeBaseState({ revision: 3, items: [itemPayload] })), {
+          status: 200
+        });
+      }
+      const rawBody = typeof init?.body === 'string' ? init.body : '{}';
+      const parsedBody = JSON.parse(rawBody) as { readonly revision: number };
+      seenRevisions.push(parsedBody.revision);
+      if (url.endsWith('/api/preflight')) {
+        await Promise.resolve();
+        return new Response(
+          JSON.stringify({ revision: 4, ok: true, diskSpace: [], conflicts: [] }),
+          { status: 200 }
+        );
+      }
+      if (url.endsWith('/api/queue/items/ep-1')) {
+        if (parsedBody.revision === 4) {
+          return new Response(
+            JSON.stringify(makeBaseState({ revision: 5, items: [itemPayload] })),
+            { status: 200 }
+          );
+        }
+        if (parsedBody.revision === 5) {
+          return new Response(
+            JSON.stringify({
+              error: 'STALE_REVISION',
+              message: 'Stale revision 5; current is 6',
+              state: makeBaseState({ revision: 6, items: [itemPayload] })
+            }),
+            { status: 409 }
+          );
+        }
+        if (parsedBody.revision === 6) {
+          return new Response(
+            JSON.stringify(makeBaseState({ revision: 7, items: [itemPayload] })),
+            { status: 200 }
+          );
+        }
+        return new Response(
+          JSON.stringify({
+            error: 'LOCK_HELD',
+            message: 'Locked by other',
+            state: makeBaseState({
+              revision: 7,
+              lockOwnerClientId: 'other:tab',
+              items: [itemPayload]
+            })
+          }),
+          { status: 409 }
+        );
+      }
+      return new Response('{}', { status: 404 });
+    });
+
+    await store.fetchState();
+
+    await Promise.all([
+      store.refreshPreflightSafely(),
+      store.patchItem(asItemId('ep-1'), {
+        audioNormalization: { mode: 'loudnorm', codec: 'auto', downmixStereo: false }
+      })
+    ]);
+    expect(seenRevisions).toEqual([3, 4]);
+    expect(store.revision).toBe(5);
+    expect(store.errorMessage).toBeNull();
+
+    seenRevisions.length = 0;
+    await store.patchItem(asItemId('ep-1'), { edition: 'Extended' });
+    expect(seenRevisions).toEqual([5, 6]);
+    expect(store.revision).toBe(7);
+    expect(store.errorMessage).toBeNull();
+
+    await expect(store.patchItem(asItemId('ep-1'), { edition: 'Cut' })).rejects.toThrow(
+      /Locked by other/
+    );
+    expect(store.errorMessage).toBe('Locked by other');
+    fetchSpy.mockRestore();
+  });
+
   it('handles scan, patchItem, applyTracksToSeries, searchMetadata, preflight, startJob, unlock, and errors', async () => {
     const ep1 = {
       id: asItemId('ep-1'),

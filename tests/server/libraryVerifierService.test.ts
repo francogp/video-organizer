@@ -418,4 +418,56 @@ describe('libraryVerifierService', () => {
     expect(fixResult.fixedEntries).toBe(1);
     await expect(fs.access(emptyRoot)).rejects.toThrow(/ENOENT/);
   });
+
+  it('ignores hidden, NAS system (.@__thumb, @eaDir, .DS_Store, Thumbs.db), and temporary files in compliance scans and empty-directory cleanup while protecting .!qB downloads', async () => {
+    const config = await makeTempConfig();
+
+    const ghostRoot = path.join(config.outputMoviesDir, 'Ghost Folder (2021)');
+    await fs.mkdir(path.join(ghostRoot, '.@__thumb'), { recursive: true });
+    await fs.mkdir(path.join(ghostRoot, '@eaDir'), { recursive: true });
+    await fs.writeFile(path.join(ghostRoot, '.DS_Store'), 'junk');
+    await fs.writeFile(path.join(ghostRoot, 'Thumbs.db'), 'junk');
+    await fs.writeFile(path.join(ghostRoot, '.@__thumb', 's100Godzilla.mkv'), 'thumb');
+    await fs.writeFile(path.join(ghostRoot, '@eaDir', 'SynologyThumb.mkv'), 'thumb');
+
+    const compliantRoot = path.join(
+      config.outputMoviesDir,
+      'Compliant Movie (2020) {imdb-tt1234567}'
+    );
+    await fs.mkdir(compliantRoot, { recursive: true });
+    await fs.writeFile(
+      path.join(compliantRoot, 'Compliant Movie (2020) {imdb-tt1234567}.mkv'),
+      'video'
+    );
+    await fs.writeFile(path.join(compliantRoot, '.DS_Store'), 'junk');
+    await fs.writeFile(path.join(compliantRoot, '._Compliant Movie.mkv'), 'appledouble');
+    await fs.writeFile(path.join(compliantRoot, 'Thumbs.db'), 'junk');
+    await fs.writeFile(path.join(compliantRoot, 'Extra.mkv.!qB'), 'partial');
+
+    const activeRoot = path.join(config.outputMoviesDir, 'Active Download (2025) {imdb-tt7654321}');
+    await fs.mkdir(activeRoot, { recursive: true });
+    await fs.writeFile(path.join(activeRoot, 'Active Download (2025).mkv.!qB'), 'downloading');
+
+    const scan = await scanLibrariesForCompliance(config, undefined, {
+      lookupMovieByImdbId: async () => undefined,
+      searchMovies: async () => []
+    });
+
+    expect(scan.summary.totalFilesAnalyzed).toBe(1);
+    expect(
+      scan.entries.find((e) => e.currentRootName === 'Compliant Movie (2020) {imdb-tt1234567}')
+    ).toBeUndefined();
+
+    const activeEntry = scan.entries.find(
+      (e) => e.currentRootName === 'Active Download (2025) {imdb-tt7654321}'
+    );
+    expect(activeEntry?.issues ?? []).not.toContain('EMPTY_DIRECTORY');
+
+    const ghostEntry = scan.entries.find((e) => e.currentRootName === 'Ghost Folder (2021)');
+    expect(ghostEntry?.issues).toEqual(['EMPTY_DIRECTORY']);
+
+    const fixResult = await applyVerifierRenames(config, ghostEntry ? [ghostEntry] : []);
+    expect(fixResult.failures).toEqual([]);
+    await expect(fs.access(ghostRoot)).rejects.toThrow(/ENOENT/);
+  });
 });

@@ -9,6 +9,7 @@ Frontend Maintainers.
 ## Local Contracts
 
 - All mutating requests must include the `X-Client-Id` header and current `revision`.
+- Revision-mutating actions (`patchItem`, `patchItemsBulk`, `runPreflight`, `startJob`) must execute through a FIFO queue (`enqueueMutation`), and `requestRevisionMutation` must perform one transparent retry on `409 STALE_REVISION` by hydrating `data.state` without surfacing transient `errorMessage` banners.
 
 ## Key Files
 

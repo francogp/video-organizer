@@ -747,11 +747,18 @@ describe('metadata clients', () => {
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const eacces = Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' });
     const origWriteFile = fsPromises.writeFile.bind(fsPromises);
+    const origAccess = fsPromises.access.bind(fsPromises);
     const writeSpy = vi.spyOn(fsPromises, 'writeFile').mockImplementation(async (p, d, o) => {
       if (typeof p === 'string' && p.includes('readonly-config-dir')) {
         throw eacces;
       }
       return origWriteFile(p, d, o);
+    });
+    const accessSpy = vi.spyOn(fsPromises, 'access').mockImplementation(async (p, mode) => {
+      if (typeof p === 'string' && p.includes('readonly-config-dir')) {
+        throw eacces;
+      }
+      return origAccess(p, mode);
     });
 
     try {
@@ -760,12 +767,24 @@ describe('metadata clients', () => {
       setCachedMetadata('movieSearch', 'test-eacces-2', []);
       await new Promise((r) => setTimeout(r, 320));
       expect(warnSpy).toHaveBeenCalledTimes(1);
+
+      // Re-configuring with unwritable configDir rehydrates fallback cache without duplicate warnings
+      await configureMetadataCache(pathMod.join(osMod.tmpdir(), 'readonly-config-dir'));
+      expect(getCachedMetadata('movieSearch', 'test-eacces-1')).toEqual([]);
+      expect(warnSpy).toHaveBeenCalledTimes(2);
+      setCachedMetadata('movieSearch', 'test-eacces-3', []);
+      await new Promise((r) => setTimeout(r, 320));
+      expect(warnSpy).toHaveBeenCalledTimes(2);
     } finally {
+      accessSpy.mockRestore();
       writeSpy.mockRestore();
       warnSpy.mockRestore();
-      await fsPromises.rm(pathMod.join(osMod.tmpdir(), 'video-organizer-metadata-cache.json'), {
-        force: true
-      });
+      await fsPromises.rm(
+        pathMod.join(osMod.tmpdir(), 'plex-video-organizer-metadata-cache.json'),
+        {
+          force: true
+        }
+      );
     }
   });
 });

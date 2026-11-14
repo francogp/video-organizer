@@ -27,21 +27,21 @@ cp .env.example .env
 
 ### Environment Variables
 
-| Variable                           | Default                         | Description                                                                                                                                                          |
-| :--------------------------------- | :------------------------------ | :------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `APP_PORT`                         | `3000`                          | HTTP port exposed by the backend server and Docker container.                                                                                                        |
-| `DEV_CLIENT_PORT`                  | `5173`                          | Vite development server port (used by `npm run dev`).                                                                                                                |
-| `PUID`                             | `1000`                          | Host user ID mapped inside the Docker container (`"${PUID}:${PGID}"`). On Windows (Docker Desktop), set `0` so NTFS bind mounts inherit your Windows user ownership. |
-| `PGID`                             | `1000`                          | Host group ID mapped inside the Docker container (`"${PUID}:${PGID}"`). On Windows (Docker Desktop), set `0` to avoid Administrator prompts when deleting files.     |
-| `HOST_CONFIG_PATH`                 | `./data/config`                 | Host path mounted to persistent app config in Docker.                                                                                                                |
-| `HOST_INPUT_PATH`                  | `./data/input`                  | Host staging path mounted to `/input` in Docker.                                                                                                                     |
-| `HOST_OUTPUT_MOVIES_PATH`          | `./data/output/movies`          | Host path for standard movies output library.                                                                                                                        |
-| `HOST_OUTPUT_DOCUMENTARIES_PATH`   | `./data/output/documentaries`   | Host path for documentaries output library.                                                                                                                          |
-| `HOST_OUTPUT_ANIMATED_MOVIES_PATH` | `./data/output/animated-movies` | Host path for animated movies output library.                                                                                                                        |
-| `HOST_OUTPUT_TV_SHOWS_PATH`        | `./data/output/tv-shows`        | Host path for standard TV shows output library.                                                                                                                      |
-| `HOST_OUTPUT_ANIMATED_SERIES_PATH` | `./data/output/animated-series` | Host path for animated series output library.                                                                                                                        |
-| `OMDB_API_KEY`                     | `""`                            | Optional OMDb API key for movie/series lookup.                                                                                                                       |
-| `TVDB_API_KEY`                     | `""`                            | Optional TVDb v4 API key for series and episode lookup (IMDb Suggestions and TVmaze work without keys).                                                              |
+| Variable                     | Default / Requirement  | Description                                                                                                                                                          |
+| :--------------------------- | :--------------------- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `APP_PORT`                   | `3000`                 | HTTP port exposed by the backend server and Docker container.                                                                                                        |
+| `DEV_CLIENT_PORT`            | `5173`                 | Vite development server port (used by `npm run dev`).                                                                                                                |
+| `PUID`                       | `1000`                 | Host user ID mapped inside the Docker container (`"${PUID}:${PGID}"`). On Windows (Docker Desktop), set `0` so NTFS bind mounts inherit your Windows user ownership. |
+| `PGID`                       | `1000`                 | Host group ID mapped inside the Docker container (`"${PUID}:${PGID}"`). On Windows (Docker Desktop), set `0` to avoid Administrator prompts when deleting files.     |
+| `CONFIG_DIR`                 | **Required in `.env`** | Writable host path mounted to `/config` in Docker (`queue.json`, scan caches).                                                                                       |
+| `INPUT_DIR`                  | **Required in `.env`** | Host staging path mounted to `/data/input` in Docker.                                                                                                                |
+| `BACKUP_DIR`                 | **Required in `.env`** | Host retention backup path (7-day cleanup) mounted to `/data/backup` in Docker.                                                                                      |
+| `OUTPUT_MOVIES_DIR`          | **Required in `.env`** | Host path mounted to `/data/output/movies` for standard movies.                                                                                                      |
+| `OUTPUT_ANIMATED_MOVIES_DIR` | **Required in `.env`** | Host path mounted to `/data/output/animated-movies` for animated movies.                                                                                             |
+| `OUTPUT_TV_SHOWS_DIR`        | **Required in `.env`** | Host path mounted to `/data/output/tv-shows` for standard TV shows.                                                                                                  |
+| `OUTPUT_ANIMATED_SERIES_DIR` | **Required in `.env`** | Host path mounted to `/data/output/animated-series` for animated series.                                                                                             |
+| `OMDB_API_KEY`               | `""`                   | Optional OMDb API key for movie/series lookup.                                                                                                                       |
+| `TVDB_API_KEY`               | `""`                   | Optional TVDb v4 API key for series and episode lookup (IMDb Suggestions and TVmaze work without keys).                                                              |
 
 ### NAS & Host File Permissions (`PUID` / `PGID`)
 
@@ -64,7 +64,7 @@ DEV_CLIENT_PORT=5173
 PUID=1000
 PGID=1000
 
-CONFIG_DIR=/mnt/user/appdata/video-organizer
+CONFIG_DIR=/mnt/user/appdata/plex-video-organizer
 INPUT_DIR=/mnt/user/downloads/staging
 BACKUP_DIR=/mnt/user/downloads/backup
 OUTPUT_MOVIES_DIR=/mnt/user/media/Movies
@@ -80,16 +80,50 @@ TVDB_API_KEY=your_tvdb_key
 
 ### Option A: Prebuilt Image (Arcane, Container Station, Portainer — No Git Required)
 
-GitHub Actions automatically builds and publishes multi-architecture images (`linux/amd64`, `linux/arm64`) to `ghcr.io/francogp/video-organizer:latest` on every push to `main` or release tag `v*`. You do **not** need `git` or local compilation on your NAS.
+GitHub Actions builds and publishes two decoupled multi-architecture images (`linux/amd64`, `linux/arm64`) **on release tags `v*`** (plus independent FFmpeg companion updates via the scheduled/manual `ffmpeg-publish.yml` workflow, never on untagged commits to `main`):
+
+- `ghcr.io/francogp/plex-video-organizer:latest` — hardened rootless Node.js 26 runtime (`read_only: true`, `cap_drop: [ALL]`, pruned of frontend build dependencies and OS-bundled FFmpeg).
+- `ghcr.io/francogp/plex-video-organizer-ffmpeg:latest` — lightweight static `ffmpeg` + `ffprobe` init container (`mwader/static-ffmpeg` + `busybox`) that populates the shared `ffmpeg-bin` volume and initializes `/config` ownership.
 
 #### Complete `compose.yaml`
 
 ```yaml
+name: plex-video-organizer
 services:
-  video-organizer:
-    image: ghcr.io/francogp/video-organizer:latest
+  ffmpeg-provider:
+    image: ghcr.io/francogp/plex-video-organizer-ffmpeg:latest
+    container_name: plex-video-organizer-ffmpeg
+    restart: 'no'
+    environment:
+      PUID: '${PUID:-1000}'
+      PGID: '${PGID:-1000}'
+      CONFIG_DIR: /config
+    volumes:
+      - ffmpeg-bin:/opt/ffmpeg
+      - '${CONFIG_DIR:?Set CONFIG_DIR in .env to a writable host directory}:/config'
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+
+  plex-video-organizer:
+    image: ghcr.io/francogp/plex-video-organizer:latest
     container_name: plex-video-organizer
+    depends_on:
+      ffmpeg-provider:
+        condition: service_completed_successfully
     user: '${PUID:-1000}:${PGID:-1000}'
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=256m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     restart: unless-stopped
     ports:
       - '${APP_PORT:-3000}:${APP_PORT:-3000}'
@@ -105,13 +139,14 @@ services:
       OUTPUT_TV_SHOWS_DIR: /data/output/tv-shows
       OUTPUT_ANIMATED_SERIES_DIR: /data/output/animated-series
     volumes:
-      - '${CONFIG_DIR:-./data/config}:/config'
-      - '${INPUT_DIR:-./data/input}:/data/input'
-      - '${BACKUP_DIR:-./data/backup}:/data/backup'
-      - '${OUTPUT_MOVIES_DIR:-./data/output/movies}:/data/output/movies'
-      - '${OUTPUT_ANIMATED_MOVIES_DIR:-./data/output/animated-movies}:/data/output/animated-movies'
-      - '${OUTPUT_TV_SHOWS_DIR:-./data/output/tv-shows}:/data/output/tv-shows'
-      - '${OUTPUT_ANIMATED_SERIES_DIR:-./data/output/animated-series}:/data/output/animated-series'
+      - ffmpeg-bin:/opt/ffmpeg:ro
+      - '${CONFIG_DIR:?Set CONFIG_DIR in .env to a writable host directory}:/config'
+      - '${INPUT_DIR:?Set INPUT_DIR in .env to your staging host directory}:/data/input'
+      - '${BACKUP_DIR:?Set BACKUP_DIR in .env to your backup host directory}:/data/backup'
+      - '${OUTPUT_MOVIES_DIR:?Set OUTPUT_MOVIES_DIR in .env to your movies output host directory}:/data/output/movies'
+      - '${OUTPUT_ANIMATED_MOVIES_DIR:?Set OUTPUT_ANIMATED_MOVIES_DIR in .env to your animated movies output host directory}:/data/output/animated-movies'
+      - '${OUTPUT_TV_SHOWS_DIR:?Set OUTPUT_TV_SHOWS_DIR in .env to your TV shows output host directory}:/data/output/tv-shows'
+      - '${OUTPUT_ANIMATED_SERIES_DIR:?Set OUTPUT_ANIMATED_SERIES_DIR in .env to your animated series output host directory}:/data/output/animated-series'
     healthcheck:
       test:
         [
@@ -124,6 +159,9 @@ services:
       timeout: 3s
       retries: 12
       start_period: 5s
+
+volumes:
+  ffmpeg-bin:
 ```
 
 #### Complete `.env` Example (NAS / Arcane)
@@ -134,9 +172,9 @@ PUID=1000
 PGID=100
 
 # Host folders (QNAP /share/... paths)
-CONFIG_DIR=/share/Container/video-organizer/config
-INPUT_DIR=/share/Download/ACOMODAR
-BACKUP_DIR=/share/Download/ACOMODAR [backup]
+CONFIG_DIR=/share/Container/plex-video-organizer/config
+INPUT_DIR=/share/Download/Staging
+BACKUP_DIR=/share/Download/Staging [backup]
 OUTPUT_MOVIES_DIR=/share/Multimedia/Movies/Regular
 OUTPUT_ANIMATED_MOVIES_DIR=/share/Multimedia/Movies/Animation
 OUTPUT_TV_SHOWS_DIR=/share/Multimedia/TV Shows/Regular
@@ -153,9 +191,9 @@ TVDB_API_KEY=
 2. Paste the **`compose.yaml`** above into the Compose editor.
 3. Paste the **`.env`** variables above into the **Environment (`.env`)** section, adjusting `PUID`, `PGID`, and your host folder paths.
 4. Click **Deploy / Up**. Open `http://<NAS-LAN-IP>:3000` in your browser.
-5. **To update later**: click **Pull** (or **Update / Redeploy**) in Arcane to fetch the latest `ghcr.io/francogp/video-organizer:latest` image.
+5. **To update later**: click **Pull** (or **Update / Redeploy**) in Arcane to fetch the latest images (`ghcr.io/francogp/plex-video-organizer:latest` and/or `ghcr.io/francogp/plex-video-organizer-ffmpeg:latest`). You can update `plex-video-organizer-ffmpeg:latest` independently and redeploy the stack without rebuilding or changing the app container image.
 
-> **Private vs. Public GHCR Package**: When the GitHub package is **Public**, Arcane and Docker pull it without authentication. If you keep the package **Private**, create a GitHub Personal Access Token with `read:packages` and add `ghcr.io` credentials once under **Arcane -> Settings -> Registries** (or run `docker login ghcr.io` on the host).
+> **Private vs. Public GHCR Package**: When the GitHub packages are **Public**, Arcane and Docker pull them without authentication. If you keep the packages **Private**, create a GitHub Personal Access Token with `read:packages` and add `ghcr.io` credentials once under **Arcane -> Settings -> Registries** (or run `docker login ghcr.io` on the host).
 
 ### Option B: Build from Source (Local Clone)
 
@@ -203,18 +241,17 @@ For QNAP NAS devices, the recommended approach is running the stack with **Conta
 Keep app configuration on your Container/SSD share and keep staging, backup, and Plex media libraries under your main media share (ideally on the same storage pool/volume):
 
 ```text
-/share/Container/video-organizer/
-├── app/                   # Cloned git repository
-└── config/                # HOST_CONFIG_PATH (queue.json, scan cache)
+/share/Container/plex-video-organizer/
+├── app/                   # Optional git clone (if building locally)
+└── config/                # CONFIG_DIR (queue.json, scan caches)
 
 /share/Media/
-├── Staging/               # HOST_INPUT_PATH (incoming downloads to organize)
-├── Backup/                # HOST_BACKUP_PATH (7-day retention backups)
-├── Movies/                # HOST_OUTPUT_MOVIES_PATH
-├── Documentaries/         # HOST_OUTPUT_DOCUMENTARIES_PATH
-├── Animated Movies/       # HOST_OUTPUT_ANIMATED_MOVIES_PATH
-├── TV Shows/              # HOST_OUTPUT_TV_SHOWS_PATH
-└── Animated Series/       # HOST_OUTPUT_ANIMATED_SERIES_PATH
+├── Staging/               # INPUT_DIR (incoming downloads to organize)
+├── Backup/                # BACKUP_DIR (7-day retention backups)
+├── Movies/                # OUTPUT_MOVIES_DIR
+├── Animated Movies/       # OUTPUT_ANIMATED_MOVIES_DIR
+├── TV Shows/              # OUTPUT_TV_SHOWS_DIR
+└── Animated Series/       # OUTPUT_ANIMATED_SERIES_DIR
 ```
 
 ### 3. Configuring User, `PUID` / `PGID`, and Folder Permissions
@@ -231,26 +268,26 @@ Keep app configuration on your Container/SSD share and keep staging, backup, and
 4. Ensure the app config and staging directories are owned by that UID/GID so `ffmpeg`, file moves, and **Verifier** bottom-up renames never fail with `EACCES`:
 
    ```bash
-   mkdir -p /share/Container/video-organizer/config \
+   mkdir -p /share/Container/plex-video-organizer/config \
      /share/Media/Staging /share/Media/Backup \
-     /share/Media/Movies /share/Media/Documentaries \
+     /share/Media/Movies \
      "/share/Media/Animated Movies" "/share/Media/TV Shows" "/share/Media/Animated Series"
 
-   chown -R 1000:100 /share/Container/video-organizer/config /share/Media/Staging /share/Media/Backup
+   chown -R 1000:100 /share/Container/plex-video-organizer/config /share/Media/Staging /share/Media/Backup
    ```
 
 ### 4. Example QNAP `.env` and Startup
 
-With the prebuilt GHCR image, you do not need `git` on QNAP: paste the `compose.yaml` and `.env` from **Option A** above into **Arcane** or **Container Station -> Applications -> Create**, or create `/share/Container/video-organizer/compose.yaml` and `/share/Container/video-organizer/.env` via SSH:
+With the prebuilt GHCR image, you do not need `git` on QNAP: paste the `compose.yaml` and `.env` from **Option A** above into **Arcane** or **Container Station -> Applications -> Create**, or create `/share/Container/plex-video-organizer/compose.yaml` and `/share/Container/plex-video-organizer/.env` via SSH:
 
 ```dotenv
 APP_PORT=3000
 PUID=1000
 PGID=100
 
-CONFIG_DIR=/share/Container/video-organizer/config
-INPUT_DIR=/share/Download/ACOMODAR
-BACKUP_DIR=/share/Download/ACOMODAR [backup]
+CONFIG_DIR=/share/Container/plex-video-organizer/config
+INPUT_DIR=/share/Download/Staging
+BACKUP_DIR=/share/Download/Staging [backup]
 OUTPUT_MOVIES_DIR=/share/Multimedia/Movies/Regular
 OUTPUT_ANIMATED_MOVIES_DIR=/share/Multimedia/Movies/Animation
 OUTPUT_TV_SHOWS_DIR=/share/Multimedia/TV Shows/Regular
@@ -263,7 +300,7 @@ TVDB_API_KEY=your_tvdb_key
 Start (or update) the container without building locally:
 
 ```bash
-cd /share/Container/video-organizer
+cd /share/Container/plex-video-organizer
 docker compose pull
 docker compose up -d
 ```

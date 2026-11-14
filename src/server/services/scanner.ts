@@ -17,6 +17,8 @@ import {
   SUBTITLE_EXTENSION_SET,
   SUBTITLE_FOLDER_SET,
   VIDEO_EXTENSION_SET,
+  isHiddenOrTempEntryName,
+  isPermissionOrReadOnlyError,
   type LanguageAlias
 } from '../../domain/constants.ts';
 import { extractPlexTags, extractSplitPart } from '../../domain/plexFormatter.ts';
@@ -40,6 +42,7 @@ import {
   type TrackSelection,
   type TvdbId
 } from '../../domain/types.ts';
+import { hasIgnoredAncestorSegment, isDirUnwritable } from './fileMover.ts';
 
 const SEASON_FOLDER_REGEX = /\b(?:season|temporada|specials)\s*(\d{0,2})\b/i;
 const SXXEXX_REGEX = /\bs(\d{1,2})e(\d{1,3})(?:-?e(\d{1,3}))?\b/i;
@@ -253,6 +256,9 @@ function applyPlexmatchEpisodeOverride(
 }
 
 function isExcludedFolderSegment(segment: string): boolean {
+  if (isHiddenOrTempEntryName(segment)) {
+    return true;
+  }
   const lower = segment.toLowerCase();
   if (
     DISK_IMAGE_FOLDER_SET.has(
@@ -310,6 +316,7 @@ async function collectExternalSubtitles(
     for (const entry of entries) {
       if (
         entry.isDirectory() &&
+        !isHiddenOrTempEntryName(entry.name) &&
         SUBTITLE_FOLDER_SET.has(entry.name.toLowerCase() as 'subs' | 'subtitles')
       ) {
         candidateDirs.push(path.join(videoDir, entry.name));
@@ -330,12 +337,17 @@ async function collectExternalSubtitles(
 
     const idxFiles = new Set(
       entries
-        .filter((e): boolean => e.isFile() && path.extname(e.name).toLowerCase() === '.idx')
+        .filter(
+          (e): boolean =>
+            e.isFile() &&
+            !isHiddenOrTempEntryName(e.name) &&
+            path.extname(e.name).toLowerCase() === '.idx'
+        )
         .map((e): string => path.basename(e.name, path.extname(e.name)).toLowerCase())
     );
 
     for (const entry of entries) {
-      if (!entry.isFile()) {
+      if (!entry.isFile() || isHiddenOrTempEntryName(entry.name)) {
         continue;
       }
       const ext = path.extname(entry.name).toLowerCase();
@@ -358,7 +370,9 @@ async function collectExternalSubtitles(
         !lowerBase.startsWith(videoStem) &&
         entries.filter(
           (e): boolean =>
-            e.isFile() && VIDEO_EXTENSION_SET.has(path.extname(e.name).toLowerCase() as never)
+            e.isFile() &&
+            !isHiddenOrTempEntryName(e.name) &&
+            VIDEO_EXTENSION_SET.has(path.extname(e.name).toLowerCase() as never)
         ).length > 1
       ) {
         continue;
@@ -570,7 +584,7 @@ export async function scanInputDirectory(
     if (shouldCancel?.()) {
       break;
     }
-    if (!entry.isFile()) {
+    if (!entry.isFile() || hasIgnoredAncestorSegment(inputDir, entry.parentPath)) {
       continue;
     }
     const fullPath = path.join(entry.parentPath, entry.name);
@@ -592,7 +606,11 @@ export async function scanInputDirectory(
     if (shouldCancel?.()) {
       break;
     }
-    if (!entry.isFile()) {
+    if (
+      !entry.isFile() ||
+      isHiddenOrTempEntryName(entry.name) ||
+      hasIgnoredAncestorSegment(inputDir, entry.parentPath)
+    ) {
       continue;
     }
     if (
@@ -707,17 +725,32 @@ export type AudioAnalysisFn = (
   onProgress?: (update: { readonly percent: number; readonly etaSeconds?: number }) => void
 ) => Promise<AudioTrackAnalysis | null>;
 
+const FALLBACK_AUDIO_CACHE_FILENAME = 'plex-video-organizer-audio-cache.json';
+
 type AudioCacheMap = Map<string, readonly AudioTrackAnalysis[]>;
 
+async function readAudioCacheFile(targetPath: string): Promise<AudioCacheMap> {
+  const raw = await fs.readFile(targetPath, 'utf8');
+  const parsed = JSON.parse(raw) as [string, readonly AudioTrackAnalysis[]][];
+  return Array.isArray(parsed) ? new Map(parsed) : new Map();
+}
+
 async function loadAudioCache(cachePath: string): Promise<AudioCacheMap> {
+  const fallbackPath = path.join(os.tmpdir(), FALLBACK_AUDIO_CACHE_FILENAME);
   try {
-    const raw = await fs.readFile(cachePath, 'utf8');
-    const parsed = JSON.parse(raw) as [string, readonly AudioTrackAnalysis[]][];
-    if (Array.isArray(parsed)) {
-      return new Map(parsed);
+    return await readAudioCacheFile(cachePath);
+  } catch (err) {
+    const code = err instanceof Error && 'code' in err ? err.code : undefined;
+    const shouldCheckFallback =
+      isPermissionOrReadOnlyError(err) ||
+      (code === 'ENOENT' && (await isDirUnwritable(path.dirname(cachePath))));
+    if (shouldCheckFallback && cachePath !== fallbackPath) {
+      try {
+        return await readAudioCacheFile(fallbackPath);
+      } catch {
+        // Ignore missing or corrupt fallback cache; it will be rebuilt.
+      }
     }
-  } catch {
-    // Ignore missing or corrupt cache; it will be rebuilt.
   }
   return new Map();
 }
@@ -864,9 +897,8 @@ export async function enrichItemsWithAudioAnalysis(
       await fs.mkdir(configDir, { recursive: true });
       await fs.writeFile(cachePath, serializedCache, 'utf8');
     } catch (err) {
-      const code = (err as NodeJS.ErrnoException | undefined)?.code;
-      if (code === 'EACCES' || code === 'EPERM') {
-        const fallbackPath = path.join(os.tmpdir(), 'video-organizer-audio-cache.json');
+      if (isPermissionOrReadOnlyError(err)) {
+        const fallbackPath = path.join(os.tmpdir(), FALLBACK_AUDIO_CACHE_FILENAME);
         console.warn(
           `Audio cache path is not writable (${cachePath}). Falling back to ${fallbackPath}.`
         );

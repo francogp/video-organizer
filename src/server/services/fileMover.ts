@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import { createReadStream, type Dirent, type Stats } from 'node:fs';
+import { constants as fsConstants, createReadStream, type Dirent, type Stats } from 'node:fs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
@@ -8,7 +8,11 @@ import {
   ORGANIZING_TEMP_MARKER,
   ORGANIZING_TEMP_SUFFIX,
   PERCENT_MAX,
-  VIDEO_EXTENSION_SET
+  VIDEO_EXTENSION_SET,
+  isActivePartialDownloadName,
+  isHiddenOrTempEntryName,
+  isPermissionOrReadOnlyError,
+  type VideoExtension
 } from '../../domain/constants.ts';
 import type { ScannedItem } from '../../domain/types.ts';
 
@@ -21,7 +25,7 @@ export async function cleanupOrphanTempFiles(inputDir: string): Promise<number> 
   try {
     const entries = await fs.readdir(inputDir, { recursive: true, withFileTypes: true });
     for (const entry of entries) {
-      if (!entry.isFile()) {
+      if (!entry.isFile() || hasIgnoredAncestorSegment(inputDir, entry.parentPath)) {
         continue;
       }
       if (
@@ -129,17 +133,55 @@ export async function moveTempOutputFile(
   }
 }
 
+/** Checks whether any ancestor folder relative to `rootDir` is hidden, temporary, or NAS system. */
+export function hasIgnoredAncestorSegment(rootDir: string, parentPath: string): boolean {
+  const relDir = path.relative(rootDir, parentPath);
+  if (!relDir || relDir === '.') {
+    return false;
+  }
+  for (const segment of relDir.split(path.sep)) {
+    if (segment && segment !== '.' && isHiddenOrTempEntryName(segment)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/** Checks whether an existing directory rejects write access (`EACCES`, `EPERM`, or `EROFS`). */
+export async function isDirUnwritable(dirPath: string): Promise<boolean> {
+  try {
+    await fs.access(dirPath, fsConstants.W_OK);
+    return false;
+  } catch (err) {
+    return isPermissionOrReadOnlyError(err);
+  }
+}
+
+async function hasPreservedEntryRecursive(dirPath: string): Promise<boolean> {
+  const entries = await fs.readdir(dirPath, { recursive: true, withFileTypes: true });
+  return entries.some((entry): boolean => {
+    if (isActivePartialDownloadName(entry.name)) {
+      return true;
+    }
+    if (entry.isDirectory()) {
+      return false;
+    }
+    return (
+      !isHiddenOrTempEntryName(entry.name) && !hasIgnoredAncestorSegment(dirPath, entry.parentPath)
+    );
+  });
+}
+
 async function pruneEmptyAncestors(startDir: string, rootStopDir: string): Promise<void> {
   const resolvedRoot = path.resolve(rootStopDir);
   let current = path.resolve(startDir);
 
   while (current !== resolvedRoot && current.startsWith(`${resolvedRoot}${path.sep}`)) {
     try {
-      const entries = await fs.readdir(current);
-      if (entries.length > 0) {
+      if (await hasPreservedEntryRecursive(current)) {
         break;
       }
-      await fs.rmdir(current);
+      await fs.rm(current, { recursive: true, force: true });
       current = path.dirname(current);
     } catch {
       break;
@@ -150,10 +192,21 @@ async function pruneEmptyAncestors(startDir: string, rootStopDir: string): Promi
 async function hasAnyVideoFile(dir: string): Promise<boolean> {
   try {
     const entries = await fs.readdir(dir, { recursive: true, withFileTypes: true });
-    return entries.some(
-      (entry): boolean =>
-        entry.isFile() && VIDEO_EXTENSION_SET.has(path.extname(entry.name).toLowerCase() as never)
-    );
+    for (const entry of entries) {
+      if (!entry.isFile() || hasIgnoredAncestorSegment(dir, entry.parentPath)) {
+        continue;
+      }
+      if (isActivePartialDownloadName(entry.name)) {
+        return true;
+      }
+      if (isHiddenOrTempEntryName(entry.name)) {
+        continue;
+      }
+      if (VIDEO_EXTENSION_SET.has(path.extname(entry.name).toLowerCase() as VideoExtension)) {
+        return true;
+      }
+    }
+    return false;
   } catch {
     return false;
   }
@@ -199,7 +252,11 @@ async function buildBackupDedupIndex(backupRootDir: string): Promise<BackupDedup
     }
   }
   for (const entry of entries) {
-    if (!entry.isFile()) {
+    if (
+      !entry.isFile() ||
+      isHiddenOrTempEntryName(entry.name) ||
+      hasIgnoredAncestorSegment(backupRootDir, entry.parentPath)
+    ) {
       continue;
     }
     const fullPath = path.join(entry.parentPath, entry.name);
@@ -310,10 +367,19 @@ export async function purgeExpiredBackups(
   for (const entry of entries) {
     const fullPath = path.join(entry.parentPath, entry.name);
     if (entry.isDirectory()) {
-      candidateDirs.add(fullPath);
+      if (
+        !isHiddenOrTempEntryName(entry.name) &&
+        !hasIgnoredAncestorSegment(resolvedBackupDir, entry.parentPath)
+      ) {
+        candidateDirs.add(fullPath);
+      }
       continue;
     }
-    if (!entry.isFile()) {
+    if (
+      !entry.isFile() ||
+      isHiddenOrTempEntryName(entry.name) ||
+      hasIgnoredAncestorSegment(resolvedBackupDir, entry.parentPath)
+    ) {
       continue;
     }
     const stat = await safeStat(fullPath);

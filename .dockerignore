@@ -4,3 +4,17 @@ node_modules
 scratch
 .env*
 *.log
+dist
+coverage
+test-results
+tests
+docs
+deploy
+.github
+.auditor
+.agents
+.vscode
+.gemini
+*.md
+Dockerfile*
+docker-compose*.yml

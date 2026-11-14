@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" fill="none">
+  <defs>
+    <linearGradient id="vo-bg" x1="0" y1="0" x2="32" y2="32" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#1A2234" />
+      <stop offset="100%" stop-color="#0F1420" />
+    </linearGradient>
+    <linearGradient id="vo-amber" x1="6" y1="7" x2="19" y2="25" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#FFBE3B" />
+      <stop offset="100%" stop-color="#E59500" />
+    </linearGradient>
+  </defs>
+  <rect x="1" y="1" width="30" height="30" rx="7" fill="url(#vo-bg)" stroke="#2E3B52" stroke-width="1.5" />
+  <path d="M7.5 8.5H12.2L18.2 16L12.2 23.5H7.5L13.5 16L7.5 8.5Z" fill="url(#vo-amber)" />
+  <rect x="18.5" y="9.5" width="6.5" height="3" rx="1.5" fill="#38BDF8" />
+  <rect x="20.5" y="14.5" width="4.5" height="3" rx="1.5" fill="#E2E8F0" />
+  <rect x="18.5" y="19.5" width="6.5" height="3" rx="1.5" fill="#94A3B8" />
+</svg>

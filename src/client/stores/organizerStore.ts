@@ -35,6 +35,14 @@ import {
 } from '../utils/storage.ts';
 
 const MAX_LOG_ENTRIES = 100;
+const HTTP_CONFLICT_STATUS = 409;
+const MAX_STALE_REVISION_ATTEMPTS = 2;
+
+interface ApiErrorEnvelope {
+  readonly error?: string;
+  readonly message?: string;
+  readonly state?: OrganizerStatePayload;
+}
 
 export const useOrganizerStore = defineStore('organizer', () => {
   const clientId = ref<ClientId>(getOrCreateClientId() as ClientId);
@@ -146,8 +154,25 @@ export const useOrganizerStore = defineStore('organizer', () => {
     errorMessage.value = null;
   }
 
-  async function requestJson<T>(url: string, init: RequestInit = {}): Promise<T> {
-    errorMessage.value = null;
+  let mutationChain: Promise<void> = Promise.resolve();
+
+  function enqueueMutation<T>(task: () => Promise<T>): Promise<T> {
+    const run = mutationChain.then(task, task);
+    mutationChain = run.then(
+      () => undefined,
+      () => undefined
+    );
+    return run;
+  }
+
+  async function executeJsonFetch<T>(
+    url: string,
+    init: RequestInit = {}
+  ): Promise<{
+    readonly ok: boolean;
+    readonly status: number;
+    readonly data: T & ApiErrorEnvelope;
+  }> {
     const headers = new Headers(init.headers);
     headers.set('X-Client-Id', clientId.value);
     if (init.body && !headers.has('Content-Type')) {
@@ -158,20 +183,50 @@ export const useOrganizerStore = defineStore('organizer', () => {
       typeof globalThis.location !== 'undefined' ? globalThis.location.origin : 'http://localhost'
     ).toString();
     const res = await fetch(safeUrl, { ...init, headers });
-    const data = (await res.json()) as T & {
-      readonly error?: string;
-      readonly message?: string;
-      readonly state?: OrganizerStatePayload;
-    };
-    if (!res.ok) {
+    const data = (await res.json()) as T & ApiErrorEnvelope;
+    return { ok: res.ok, status: res.status, data };
+  }
+
+  function throwApiError(status: number, data: ApiErrorEnvelope): never {
+    if (data.state) {
+      applyServerState(data.state);
+    }
+    const msg = data.message ?? data.error ?? `HTTP ${String(status)}`;
+    errorMessage.value = msg;
+    throw new Error(msg);
+  }
+
+  async function requestJson<T>(url: string, init: RequestInit = {}): Promise<T> {
+    errorMessage.value = null;
+    const { ok, status, data } = await executeJsonFetch<T>(url, init);
+    if (!ok) {
+      throwApiError(status, data);
+    }
+    return data;
+  }
+
+  async function requestRevisionMutation<T>(url: string, buildInit: () => RequestInit): Promise<T> {
+    errorMessage.value = null;
+    for (let attempt = 0; attempt < MAX_STALE_REVISION_ATTEMPTS; attempt += 1) {
+      const { ok, status, data } = await executeJsonFetch<T>(url, buildInit());
+      if (ok) {
+        return data;
+      }
       if (data.state) {
         applyServerState(data.state);
       }
-      const msg = data.message ?? data.error ?? `HTTP ${String(res.status)}`;
-      errorMessage.value = msg;
-      throw new Error(msg);
+      const isRetryableStale =
+        attempt === 0 &&
+        status === HTTP_CONFLICT_STATUS &&
+        data.error === 'STALE_REVISION' &&
+        data.state !== undefined;
+      if (isRetryableStale) {
+        errorMessage.value = null;
+        continue;
+      }
+      throwApiError(status, data);
     }
-    return data;
+    throw new Error('Mutation exceeded stale-revision retry limit');
   }
 
   async function fetchState(): Promise<void> {
@@ -369,24 +424,34 @@ export const useOrganizerStore = defineStore('organizer', () => {
   }
 
   async function patchItem(itemId: ItemId, patch: ItemPatch): Promise<void> {
-    clearConflictResolutions();
-    const next = await requestJson<OrganizerStatePayload>(`/api/queue/items/${itemId}`, {
-      method: 'PATCH',
-      body: JSON.stringify({ revision: revision.value, patch })
+    await enqueueMutation(async () => {
+      clearConflictResolutions();
+      const next = await requestRevisionMutation<OrganizerStatePayload>(
+        `/api/queue/items/${itemId}`,
+        () => ({
+          method: 'PATCH',
+          body: JSON.stringify({ revision: revision.value, patch })
+        })
+      );
+      applyServerState(next);
     });
-    applyServerState(next);
   }
 
   async function patchItemsBulk(itemIds: readonly ItemId[], patch: ItemPatch): Promise<void> {
     if (itemIds.length === 0) {
       return;
     }
-    clearConflictResolutions();
-    const next = await requestJson<OrganizerStatePayload>('/api/queue/items/bulk', {
-      method: 'PATCH',
-      body: JSON.stringify({ revision: revision.value, itemIds, patch })
+    await enqueueMutation(async () => {
+      clearConflictResolutions();
+      const next = await requestRevisionMutation<OrganizerStatePayload>(
+        '/api/queue/items/bulk',
+        () => ({
+          method: 'PATCH',
+          body: JSON.stringify({ revision: revision.value, itemIds, patch })
+        })
+      );
+      applyServerState(next);
     });
-    applyServerState(next);
   }
 
   async function applyTracksToSeries(sourceItem: ScannedItem): Promise<void> {
@@ -435,27 +500,31 @@ export const useOrganizerStore = defineStore('organizer', () => {
   }
 
   async function runPreflight(): Promise<boolean> {
-    const res = await requestJson<{
-      readonly revision: number;
-      readonly ok: boolean;
-      readonly diskSpace: DiskSpaceCheck[];
-      readonly conflicts: ConflictComparison[];
-    }>('/api/preflight', {
-      method: 'POST',
-      body: JSON.stringify({ revision: revision.value })
+    return enqueueMutation(async () => {
+      const res = await requestRevisionMutation<{
+        readonly revision: number;
+        readonly ok: boolean;
+        readonly diskSpace: DiskSpaceCheck[];
+        readonly conflicts: ConflictComparison[];
+      }>('/api/preflight', () => ({
+        method: 'POST',
+        body: JSON.stringify({ revision: revision.value })
+      }));
+      revision.value = res.revision;
+      preflightConflicts.value = res.conflicts;
+      preflightDiskSpace.value = res.diskSpace;
+      return res.ok;
     });
-    revision.value = res.revision;
-    preflightConflicts.value = res.conflicts;
-    preflightDiskSpace.value = res.diskSpace;
-    return res.ok;
   }
 
   async function startJob(
     conflictResolutions: Readonly<Partial<Record<ItemId, ConflictDecision>>> = {}
   ): Promise<void> {
-    await requestJson<{ readonly jobId: JobId; readonly revision: number }>('/api/jobs/start', {
-      method: 'POST',
-      body: JSON.stringify({ revision: revision.value, conflictResolutions })
+    await enqueueMutation(async () => {
+      await requestJson<{ readonly jobId: JobId; readonly revision: number }>('/api/jobs/start', {
+        method: 'POST',
+        body: JSON.stringify({ revision: revision.value, conflictResolutions })
+      });
     });
   }
 

@@ -74,7 +74,7 @@ read_env_value() {
   local key="$2"
   local default_val="${3:-}"
   local raw
-  raw="$(grep -E "^${key}=" "${env_file}" | tail -n1 | cut -d'=' -f2- | tr -d '[:space:]' || true)"
+  raw="$(grep -E "^${key}=" "${env_file}" | tail -n1 | cut -d'=' -f2- | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' -e 's/^"\(.*\)"$/\1/' -e "s/^'\(.*\)'$/\1/" || true)"
   echo "${raw:-${default_val}}"
 }
 
@@ -99,6 +99,7 @@ ensure_env_file() {
   local path_keys=(
     CONFIG_DIR
     INPUT_DIR
+    BACKUP_DIR
     OUTPUT_MOVIES_DIR
     OUTPUT_ANIMATED_MOVIES_DIR
     OUTPUT_TV_SHOWS_DIR

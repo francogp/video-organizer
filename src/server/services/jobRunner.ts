@@ -8,7 +8,8 @@ import {
   DEFAULT_PREFERRED_LANGUAGES,
   METADATA_LANGUAGE_CODES,
   ORGANIZING_TEMP_MARKER,
-  ORGANIZING_TEMP_SUFFIX
+  ORGANIZING_TEMP_SUFFIX,
+  isPermissionOrReadOnlyError
 } from '../../domain/constants.ts';
 import { parseProviderReference } from '../../domain/plexFormatter.ts';
 import {
@@ -43,6 +44,7 @@ import { buildMountPathsMap, type AppConfig } from '../config.ts';
 import {
   backupAndCleanupAfterJob,
   cleanupOrphanTempFiles,
+  isDirUnwritable,
   moveTempOutputFile,
   purgeExpiredBackups
 } from './fileMover.ts';
@@ -69,6 +71,7 @@ import { enrichItemsWithAudioAnalysis, scanInputDirectory } from './scanner.ts';
 
 const MAX_RECENT_LOGS = 100;
 const PERCENT_MAX = 100;
+const FALLBACK_QUEUE_FILENAME = 'plex-video-organizer-queue.json';
 
 function resolveCategoryFromMetadata(
   mediaKind: MediaKind,
@@ -120,6 +123,8 @@ export class JobRunner {
   readonly #recentLogs: SseLogEvent[] = [];
   readonly #subscribers = new Set<SseSubscriber>();
   #persistChain: Promise<void> = Promise.resolve();
+  #queuePath: string;
+  #queueFallbackWarned = false;
   #verifier: VerifierState = {
     scanning: false,
     fixing: false,
@@ -131,14 +136,30 @@ export class JobRunner {
 
   public constructor(config: AppConfig) {
     this.#config = config;
+    this.#queuePath = path.join(config.configDir, 'queue.json');
   }
 
   public async init(): Promise<void> {
     await cleanupOrphanTempFiles(this.#config.inputDir);
     await configureMetadataCache(this.#config.configDir);
-    const queuePath = path.join(this.#config.configDir, 'queue.json');
+
+    const fallbackQueuePath = path.join(os.tmpdir(), FALLBACK_QUEUE_FILENAME);
+    if (await isDirUnwritable(this.#config.configDir)) {
+      this.#switchToFallbackQueuePath();
+    }
+
+    const hydrated = await this.#tryHydrateQueue(this.#queuePath);
+    if (!hydrated.ok && hydrated.permissionOrReadOnly && this.#queuePath !== fallbackQueuePath) {
+      this.#switchToFallbackQueuePath();
+      await this.#tryHydrateQueue(this.#queuePath);
+    }
+  }
+
+  async #tryHydrateQueue(
+    targetPath: string
+  ): Promise<{ readonly ok: boolean; readonly permissionOrReadOnly: boolean }> {
     try {
-      const raw = await fs.readFile(queuePath, 'utf8');
+      const raw = await fs.readFile(targetPath, 'utf8');
       const parsed = JSON.parse(raw) as {
         readonly revision?: number;
         readonly items?: ScannedItem[];
@@ -149,9 +170,22 @@ export class JobRunner {
       if (Array.isArray(parsed.items)) {
         this.#items = parsed.items;
       }
-    } catch {
-      // Fresh queue
+      return { ok: true, permissionOrReadOnly: false };
+    } catch (err) {
+      return { ok: false, permissionOrReadOnly: isPermissionOrReadOnlyError(err) };
     }
+  }
+
+  #switchToFallbackQueuePath(): string {
+    const fallbackPath = path.join(os.tmpdir(), FALLBACK_QUEUE_FILENAME);
+    this.#queuePath = fallbackPath;
+    if (!this.#queueFallbackWarned) {
+      this.#queueFallbackWarned = true;
+      const msg = `CONFIG_DIR (${this.#config.configDir}) is not writable; falling back to ${fallbackPath}. Set a writable CONFIG_DIR and matching PUID/PGID in .env.`;
+      console.warn(msg);
+      this.#emitLog('warn', msg);
+    }
+    return fallbackPath;
   }
 
   public subscribe(sub: SseSubscriber): () => void {
@@ -237,17 +271,36 @@ export class JobRunner {
     }
   }
 
+  async #writeQueueAtomically(targetPath: string, payloadJson: string): Promise<void> {
+    await fs.mkdir(path.dirname(targetPath), { recursive: true });
+    const tmpPath = `${targetPath}.${crypto.randomUUID()}.tmp`;
+    try {
+      await fs.writeFile(tmpPath, payloadJson, 'utf8');
+      await fs.rename(tmpPath, targetPath);
+    } catch (err) {
+      try {
+        await fs.rm(tmpPath, { force: true });
+      } catch {
+        // Ignore cleanup failure when the temp file could not be removed
+      }
+      throw err;
+    }
+  }
+
   async #persistQueue(): Promise<void> {
     const writeTask = async (): Promise<void> => {
-      await fs.mkdir(this.#config.configDir, { recursive: true });
-      const queuePath = path.join(this.#config.configDir, 'queue.json');
-      const tmpPath = `${queuePath}.${crypto.randomUUID()}.tmp`;
-      await fs.writeFile(
-        tmpPath,
-        JSON.stringify({ revision: this.#revision, items: this.#items }, null, 2),
-        'utf8'
-      );
-      await fs.rename(tmpPath, queuePath);
+      const payloadJson = JSON.stringify({ revision: this.#revision, items: this.#items }, null, 2);
+      const fallbackPath = path.join(os.tmpdir(), FALLBACK_QUEUE_FILENAME);
+      try {
+        await this.#writeQueueAtomically(this.#queuePath, payloadJson);
+      } catch (err) {
+        if (isPermissionOrReadOnlyError(err) && this.#queuePath !== fallbackPath) {
+          const nextPath = this.#switchToFallbackQueuePath();
+          await this.#writeQueueAtomically(nextPath, payloadJson);
+          return;
+        }
+        throw err;
+      }
     };
     const next = this.#persistChain.then(writeTask, writeTask);
     this.#persistChain = next;

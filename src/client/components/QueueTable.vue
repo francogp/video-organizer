@@ -635,15 +635,6 @@ function onBulkAudioChange(event: Event): void {
           </option>
         </select>
       </template>
-      <button
-        type="button"
-        class="vo-btn"
-        :disabled="disabled || filteredIndices.length === 0"
-        @click="toggleSelectVisible(!allVisibleSelected)"
-      >
-        <span aria-hidden="true">{{ allVisibleSelected ? '☑️' : '✅' }}</span>
-        {{ allVisibleSelected ? 'Deselect Visible' : 'Select Visible' }}
-      </button>
       <button type="button" class="vo-btn" @click="vTableRef?.resetColumns()">
         <span aria-hidden="true">🔄</span> Reset Columns
       </button>

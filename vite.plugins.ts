@@ -27,7 +27,7 @@ const viteApiTarget = `http://127.0.0.1:${String(resolvePort(process.env.APP_POR
 const appSemver = resolveAppSemver();
 
 const devProxyPlugin: PluginOption = {
-  name: 'video-organizer-dev-proxy',
+  name: 'plex-video-organizer-dev-proxy',
   config() {
     return {
       define: {

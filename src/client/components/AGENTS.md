@@ -13,6 +13,7 @@ Frontend Maintainers.
 - Table headers (`<th>`) must use an opaque surface (`var(--vo-surface-elevated)`) with explicit cell borders, a single horizontal scrollbar on the table wrapper, and `min-width: 0; max-width: 100%;` on cells so content never overlaps adjacent columns.
 - Parent components styling `VirtualDataTable` rows (`QueueTable.vue`) must use `:deep(tr.vo-row--has-conflict)` and `--vo-warning` (never `--vo-warn`), keeping a continuous left accent border across the parent row and `#row-after` conflict panel plus the target filename in the conflict header.
 - Include descriptive `<span aria-hidden="true">` emojis on action buttons, count badges on primary batch triggers, and keep the active job progress bar split into three rows (Cancel button + metrics/ETA, active filename, `<progress>`).
+- Expose visible-row bulk selection exclusively via the `#vo-select-all-visible` header checkbox in `QueueTable.vue` (never duplicate a toolbar `Select Visible` button), and serve the standalone vector Chevron Stack icon from `public/favicon.svg` across `index.html` and the `src/client/App.vue` header.
 
 ## Key Files
 

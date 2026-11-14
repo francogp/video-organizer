@@ -2,8 +2,9 @@ import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { METADATA_CACHE_TTL_MS } from '../../../domain/constants.ts';
+import { METADATA_CACHE_TTL_MS, isPermissionOrReadOnlyError } from '../../../domain/constants.ts';
 import type { MetadataCandidate } from '../../../domain/types.ts';
+import { isDirUnwritable } from '../fileMover.ts';
 
 export type MetadataCacheBucket =
   | 'movieSearch'
@@ -108,9 +109,41 @@ function serializeBucket<T>(
   return out;
 }
 
-function isPermissionError(err: unknown): boolean {
-  const code = (err as NodeJS.ErrnoException | undefined)?.code;
-  return code === 'EACCES' || code === 'EPERM';
+function getFallbackCachePath(): string {
+  return path.join(os.tmpdir(), `plex-video-organizer-${CACHE_FILENAME}`);
+}
+
+function warnFallbackOnce(primaryPath: string, fallbackPath: string): void {
+  if (permissionWarned) {
+    return;
+  }
+  permissionWarned = true;
+  const uid = process.getuid?.() ?? 'unknown';
+  const gid = process.getgid?.() ?? 'unknown';
+  console.warn(
+    `Metadata cache directory is not writable (${path.dirname(primaryPath)} for uid=${String(uid)} gid=${String(gid)}). Falling back to ${fallbackPath}.`
+  );
+}
+
+async function tryHydrateCacheFile(
+  targetPath: string
+): Promise<{ readonly ok: boolean; readonly permissionOrReadOnly: boolean }> {
+  try {
+    const raw = await fs.readFile(targetPath, 'utf8');
+    const parsed = JSON.parse(raw) as Partial<SerializedMetadataCache>;
+    if (!parsed || typeof parsed !== 'object' || parsed.version !== CACHE_VERSION) {
+      return { ok: true, permissionOrReadOnly: false };
+    }
+    const nowMs = Temporal.Now.instant().epochMilliseconds;
+    hydrateBucket(memoryCache.movieSearch, parsed.movieSearch, nowMs);
+    hydrateBucket(memoryCache.movieById, parsed.movieById, nowMs);
+    hydrateBucket(memoryCache.tvSearch, parsed.tvSearch, nowMs);
+    hydrateBucket(memoryCache.seriesById, parsed.seriesById, nowMs);
+    hydrateBucket(memoryCache.episodeMaps, parsed.episodeMaps, nowMs);
+    return { ok: true, permissionOrReadOnly: false };
+  } catch (err) {
+    return { ok: false, permissionOrReadOnly: isPermissionOrReadOnlyError(err) };
+  }
 }
 
 async function writeCacheAtomically(targetPath: string, payloadJson: string): Promise<void> {
@@ -139,16 +172,9 @@ async function flushPersist(): Promise<void> {
   try {
     await writeCacheAtomically(targetPath, payloadJson);
   } catch (err) {
-    const fallbackPath = path.join(os.tmpdir(), `video-organizer-${CACHE_FILENAME}`);
-    if (isPermissionError(err) && targetPath !== fallbackPath) {
-      if (!permissionWarned) {
-        permissionWarned = true;
-        const uid = process.getuid?.() ?? 'unknown';
-        const gid = process.getgid?.() ?? 'unknown';
-        console.warn(
-          `Metadata cache directory is not writable (${path.dirname(targetPath)} for uid=${String(uid)} gid=${String(gid)}). Falling back to ${fallbackPath}.`
-        );
-      }
+    const fallbackPath = getFallbackCachePath();
+    if (isPermissionOrReadOnlyError(err) && targetPath !== fallbackPath) {
+      warnFallbackOnce(targetPath, fallbackPath);
       configuredCachePath = fallbackPath;
       try {
         await writeCacheAtomically(fallbackPath, payloadJson);
@@ -183,22 +209,28 @@ export async function configureMetadataCache(configDir: string): Promise<void> {
   }
   await persistChain;
   permissionWarned = false;
-  configuredCachePath = path.join(configDir, CACHE_FILENAME);
+  const primaryPath = path.join(configDir, CACHE_FILENAME);
+  const fallbackPath = getFallbackCachePath();
+  configuredCachePath = primaryPath;
   clearAllBuckets();
-  try {
-    const raw = await fs.readFile(configuredCachePath, 'utf8');
-    const parsed = JSON.parse(raw) as Partial<SerializedMetadataCache>;
-    if (!parsed || typeof parsed !== 'object' || parsed.version !== CACHE_VERSION) {
-      return;
+
+  if ((await isDirUnwritable(configDir)) && primaryPath !== fallbackPath) {
+    warnFallbackOnce(primaryPath, fallbackPath);
+    configuredCachePath = fallbackPath;
+    const loadedFallback = await tryHydrateCacheFile(fallbackPath);
+    if (!loadedFallback.ok) {
+      await tryHydrateCacheFile(primaryPath);
     }
-    const nowMs = Temporal.Now.instant().epochMilliseconds;
-    hydrateBucket(memoryCache.movieSearch, parsed.movieSearch, nowMs);
-    hydrateBucket(memoryCache.movieById, parsed.movieById, nowMs);
-    hydrateBucket(memoryCache.tvSearch, parsed.tvSearch, nowMs);
-    hydrateBucket(memoryCache.seriesById, parsed.seriesById, nowMs);
-    hydrateBucket(memoryCache.episodeMaps, parsed.episodeMaps, nowMs);
-  } catch {
-    // Missing or corrupt cache file starts clean
+    return;
+  }
+
+  const loadedPrimary = await tryHydrateCacheFile(primaryPath);
+  if (!loadedPrimary.ok) {
+    if (loadedPrimary.permissionOrReadOnly && primaryPath !== fallbackPath) {
+      warnFallbackOnce(primaryPath, fallbackPath);
+      configuredCachePath = fallbackPath;
+    }
+    await tryHydrateCacheFile(fallbackPath);
   }
 }
 

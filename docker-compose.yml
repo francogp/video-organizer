@@ -1,13 +1,47 @@
+name: plex-video-organizer
 services:
-  video-organizer:
-    build: .
+  ffmpeg-provider:
+    build:
+      context: .
+      target: ffmpeg-provider
+    container_name: plex-video-organizer-ffmpeg
+    restart: 'no'
+    environment:
+      PUID: '${PUID:-1000}'
+      PGID: '${PGID:-1000}'
+      CONFIG_DIR: /config
+    volumes:
+      - ffmpeg-bin:/opt/ffmpeg
+      - '${CONFIG_DIR:?Set CONFIG_DIR in .env to a writable host directory}:/config'
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+
+  plex-video-organizer:
+    build:
+      context: .
+      target: runtime
     container_name: plex-video-organizer
+    depends_on:
+      ffmpeg-provider:
+        condition: service_completed_successfully
+    user: '${PUID:-1000}:${PGID:-1000}'
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=256m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     restart: unless-stopped
     ports:
       - '${APP_PORT:-3000}:${APP_PORT:-3000}'
     environment:
-      PUID: '${PUID:-1000}'
-      PGID: '${PGID:-1000}'
       APP_PORT: '${APP_PORT:-3000}'
       OMDB_API_KEY: '${OMDB_API_KEY:-}'
       TVDB_API_KEY: '${TVDB_API_KEY:-}'
@@ -19,13 +53,14 @@ services:
       OUTPUT_TV_SHOWS_DIR: /data/output/tv-shows
       OUTPUT_ANIMATED_SERIES_DIR: /data/output/animated-series
     volumes:
-      - '${CONFIG_DIR:-./data/config}:/config'
-      - '${INPUT_DIR:-./data/input}:/data/input'
-      - '${BACKUP_DIR:-./data/backup}:/data/backup'
-      - '${OUTPUT_MOVIES_DIR:-./data/output/movies}:/data/output/movies'
-      - '${OUTPUT_ANIMATED_MOVIES_DIR:-./data/output/animated-movies}:/data/output/animated-movies'
-      - '${OUTPUT_TV_SHOWS_DIR:-./data/output/tv-shows}:/data/output/tv-shows'
-      - '${OUTPUT_ANIMATED_SERIES_DIR:-./data/output/animated-series}:/data/output/animated-series'
+      - ffmpeg-bin:/opt/ffmpeg:ro
+      - '${CONFIG_DIR:?Set CONFIG_DIR in .env to a writable host directory}:/config'
+      - '${INPUT_DIR:?Set INPUT_DIR in .env to your staging host directory}:/data/input'
+      - '${BACKUP_DIR:?Set BACKUP_DIR in .env to your backup host directory}:/data/backup'
+      - '${OUTPUT_MOVIES_DIR:?Set OUTPUT_MOVIES_DIR in .env to your movies output host directory}:/data/output/movies'
+      - '${OUTPUT_ANIMATED_MOVIES_DIR:?Set OUTPUT_ANIMATED_MOVIES_DIR in .env to your animated movies output host directory}:/data/output/animated-movies'
+      - '${OUTPUT_TV_SHOWS_DIR:?Set OUTPUT_TV_SHOWS_DIR in .env to your TV shows output host directory}:/data/output/tv-shows'
+      - '${OUTPUT_ANIMATED_SERIES_DIR:?Set OUTPUT_ANIMATED_SERIES_DIR in .env to your animated series output host directory}:/data/output/animated-series'
     healthcheck:
       test:
         [
@@ -38,3 +73,6 @@ services:
       timeout: 3s
       retries: 12
       start_period: 5s
+
+volumes:
+  ffmpeg-bin:

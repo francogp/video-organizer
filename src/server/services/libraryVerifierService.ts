@@ -1,7 +1,13 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
-import { DEFAULT_PREFERRED_LANGUAGES, OUTPUT_CATEGORIES } from '../../domain/constants.ts';
+import {
+  CASE_TMP_SUFFIX,
+  DEFAULT_PREFERRED_LANGUAGES,
+  OUTPUT_CATEGORIES,
+  isActivePartialDownloadName,
+  isHiddenOrTempEntryName
+} from '../../domain/constants.ts';
 import {
   buildMovieVerificationEntry,
   buildTvVerificationEntry,
@@ -30,7 +36,6 @@ import {
 } from './metadata/tvdbClient.ts';
 
 const VERIFIER_CONCURRENCY = 4;
-const CASE_TMP_SUFFIX = '.__vo_case_tmp__';
 
 function isTvCategory(category: OutputCategory): boolean {
   return category === 'tv-shows' || category === 'animated-series';
@@ -83,12 +88,6 @@ async function pathExists(targetPath: string): Promise<boolean> {
   } catch {
     return false;
   }
-}
-
-function isIgnoredDirName(name: string): boolean {
-  return (
-    name.startsWith('.') || name === '@Recycle' || name === '#recycle' || name === 'lost+found'
-  );
 }
 
 const MIN_FALLBACK_TITLE_SIMILARITY = 0.75;
@@ -400,7 +399,7 @@ export async function scanLibrariesForCompliance(
     try {
       const dirents = await fs.readdir(libraryRoot, { withFileTypes: true });
       const rootDirs = dirents
-        .filter((d): boolean => d.isDirectory() && !isIgnoredDirName(d.name))
+        .filter((d): boolean => d.isDirectory() && !isHiddenOrTempEntryName(d.name))
         .map((d) => d.name)
         .sort((a, b) => a.localeCompare(b));
       discovered.push({ category, libraryRoot, rootDirs });
@@ -481,17 +480,21 @@ export async function scanLibrariesForCompliance(
         let entry: VerifierEntry | null;
         if (isTv) {
           const seasonSubdirs = childDirents
-            .filter((d): boolean => d.isDirectory() && !isIgnoredDirName(d.name))
+            .filter((d): boolean => d.isDirectory() && !isHiddenOrTempEntryName(d.name))
             .map((d) => d.name)
             .sort((a, b) => a.localeCompare(b));
           totalSeasonFolders += seasonSubdirs.length;
-          totalFiles += childDirents.filter((d): boolean => d.isFile()).length;
+          totalFiles += childDirents.filter(
+            (d): boolean => d.isFile() && !isHiddenOrTempEntryName(d.name)
+          ).length;
 
           const seasonDirs: SeasonDirFiles[] = [];
           for (const seasonName of seasonSubdirs) {
             const seasonPath = path.join(rootPath, seasonName);
             const seasonChildren = await fs.readdir(seasonPath, { withFileTypes: true });
-            const files = seasonChildren.filter((d): boolean => d.isFile()).map((d) => d.name);
+            const files = seasonChildren
+              .filter((d): boolean => d.isFile() && !isHiddenOrTempEntryName(d.name))
+              .map((d) => d.name);
             totalFiles += files.length;
             seasonDirs.push({ dirName: seasonName, files });
           }
@@ -510,7 +513,9 @@ export async function scanLibrariesForCompliance(
             unresolvedMetadata: meta.unresolvedMetadata
           });
         } else {
-          const files = childDirents.filter((d): boolean => d.isFile()).map((d) => d.name);
+          const files = childDirents
+            .filter((d): boolean => d.isFile() && !isHiddenOrTempEntryName(d.name))
+            .map((d) => d.name);
           totalFiles += files.length;
           const meta = await resolveMovieMetadata(rootName, config, deps, lookupOptions);
           entry = buildMovieVerificationEntry({
@@ -585,6 +590,12 @@ async function isDirectoryEmptyRecursive(dirPath: string): Promise<boolean> {
   try {
     const entries = await fs.readdir(dirPath, { withFileTypes: true });
     for (const entry of entries) {
+      if (isActivePartialDownloadName(entry.name)) {
+        return false;
+      }
+      if (isHiddenOrTempEntryName(entry.name)) {
+        continue;
+      }
       if (!entry.isDirectory()) {
         return false;
       }
@@ -604,6 +615,10 @@ async function moveDirectoryContentsFallback(fromAbs: string, toAbs: string): Pr
   for (const child of children) {
     const childFrom = path.join(fromAbs, child.name);
     const childTo = path.join(toAbs, child.name);
+    if (isHiddenOrTempEntryName(child.name) && !isActivePartialDownloadName(child.name)) {
+      await fs.rm(childFrom, { recursive: true, force: true });
+      continue;
+    }
     if (child.isDirectory()) {
       if (await isDirectoryEmptyRecursive(childFrom)) {
         await fs.rm(childFrom, { recursive: true });

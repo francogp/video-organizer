@@ -177,10 +177,12 @@ describe('preflight', () => {
       const reportMulti = await runPreflightCheck([multiItem], mounts, async () => PROBE);
       expect(reportMulti.ok).toBe(false);
 
-      // Folder with only non-video files does not trigger a false movie collision
+      // Folder with only non-video files, AppleDouble, or temp video files does not trigger a collision
       const textOnlyDir = path.join(moviesDir, 'Clean (2025) {imdb-tt9999999}');
       await fs.mkdir(textOnlyDir, { recursive: true });
       await fs.writeFile(path.join(textOnlyDir, 'readme.txt'), 'not a video');
+      await fs.writeFile(path.join(textOnlyDir, '._Clean (2025).mkv'), 'appledouble');
+      await fs.writeFile(path.join(textOnlyDir, 'Clean (2025).tmp.mkv'), 'temp');
       const cleanMovie = makeItem('m-clean', 'Clean', 'tt9999999');
       const reportClean = await runPreflightCheck(
         [

@@ -208,4 +208,90 @@ describe('fileMover', () => {
       await fs.rm(tmpDir, { recursive: true, force: true });
     }
   });
+
+  it('backupAndCleanupAfterJob removes folders containing only .@__thumb and .DS_Store leftovers while preserving folders with active .!qB downloads', async () => {
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'vo-clean-hidden-'));
+    try {
+      const inputDir = path.join(tmpDir, 'input');
+      const backupDir = path.join(tmpDir, 'backup');
+      const movieDir = path.join(inputDir, 'MovieA');
+      const showDir = path.join(inputDir, 'ShowB');
+      await fs.mkdir(path.join(movieDir, '.@__thumb'), { recursive: true });
+      await fs.mkdir(showDir, { recursive: true });
+
+      const movieSrc = path.join(movieDir, 'MovieA.mkv');
+      const ep1Src = path.join(showDir, 'S01E01.mkv');
+      const activePartial = path.join(showDir, 'InProgress', 'S01E02.mkv.!qB');
+      await fs.mkdir(path.dirname(activePartial), { recursive: true });
+      await fs.mkdir(path.join(inputDir, '@Recycle'), { recursive: true });
+      const recycleOrphan = path.join(inputDir, '@Recycle', 'Old.organizing.j1.i1.tmp.mkv');
+      const regularOrphan = path.join(inputDir, 'Regular.organizing.j1.i1.tmp.mkv');
+      await fs.writeFile(recycleOrphan, 'keep-recycle');
+      await fs.writeFile(regularOrphan, 'remove-orphan');
+      await fs.writeFile(movieSrc, 'movie-bytes');
+      await fs.writeFile(path.join(movieDir, '.@__thumb', 'defaultMovieA.mkv'), 'thumb');
+      await fs.writeFile(path.join(movieDir, '.DS_Store'), 'junk');
+      await fs.writeFile(ep1Src, 'ep1-bytes');
+      await fs.writeFile(activePartial, 'active-download');
+
+      const items: ScannedItem[] = [
+        {
+          id: asItemId('m1'),
+          sourcePath: movieSrc,
+          relativePath: 'MovieA/MovieA.mkv',
+          fileName: 'MovieA.mkv',
+          mediaKind: 'movie',
+          category: 'movies',
+          include: true,
+          parsedTitle: 'MovieA',
+          tags: [],
+          episodeOrder: 'aired',
+          probe: EMPTY_PROBE,
+          externalSubtitles: [],
+          candidates: [],
+          trackSelection: {
+            audioTracks: [],
+            subtitleMergeMode: 'keep-and-add',
+            includedInternalSubtitles: [],
+            externalSubtitleOrder: [],
+            needsUserPrompt: false
+          },
+          warnings: []
+        },
+        {
+          id: asItemId('s1'),
+          sourcePath: ep1Src,
+          relativePath: 'ShowB/S01E01.mkv',
+          fileName: 'S01E01.mkv',
+          mediaKind: 'tv',
+          category: 'tv-shows',
+          include: true,
+          parsedTitle: 'ShowB',
+          tags: [],
+          episodeOrder: 'aired',
+          probe: EMPTY_PROBE,
+          externalSubtitles: [],
+          candidates: [],
+          trackSelection: {
+            audioTracks: [],
+            subtitleMergeMode: 'keep-and-add',
+            includedInternalSubtitles: [],
+            externalSubtitleOrder: [],
+            needsUserPrompt: false
+          },
+          warnings: []
+        }
+      ];
+
+      await backupAndCleanupAfterJob(items, inputDir, backupDir);
+      await expect(fs.access(movieDir)).rejects.toThrow(/ENOENT/);
+      await expect(fs.readFile(activePartial, 'utf8')).resolves.toBe('active-download');
+      const cleanedCount = await cleanupOrphanTempFiles(inputDir);
+      expect(cleanedCount).toBe(1);
+      await expect(fs.readFile(recycleOrphan, 'utf8')).resolves.toBe('keep-recycle');
+      await expect(fs.access(regularOrphan)).rejects.toThrow(/ENOENT/);
+    } finally {
+      await fs.rm(tmpDir, { recursive: true, force: true });
+    }
+  });
 });

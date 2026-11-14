@@ -382,34 +382,98 @@ describe('scanner', () => {
     const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'vo-scan-eacces-'));
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const origWriteFile = fs.writeFile.bind(fs);
+    const origAccess = fs.access.bind(fs);
     const writeSpy = vi.spyOn(fs, 'writeFile').mockImplementation(async (p, d, o) => {
       if (typeof p === 'string' && p.includes('readonly-cfg')) {
         throw Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' });
       }
       return origWriteFile(p, d, o);
     });
+    const accessSpy = vi.spyOn(fs, 'access').mockImplementation(async (p, mode) => {
+      if (typeof p === 'string' && p.includes('readonly-cfg')) {
+        throw Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' });
+      }
+      return origAccess(p, mode);
+    });
 
     try {
       await fs.writeFile(path.join(tmpDir, 'Movie.2020.mkv'), 'video');
       const items = await scanInputDirectory(tmpDir, async () => MOCK_PROBE);
+      const analyzeSpy = vi.fn(async (_filePath: string, streamOrder: number) => ({
+        streamOrder,
+        meanVolumeDb: -16,
+        maxVolumeDb: -1,
+        recommendedGainDb: 0,
+        suggestion: 'ok' as const
+      }));
       const enriched = await enrichItemsWithAudioAnalysis(
         items,
         path.join(tmpDir, 'readonly-cfg'),
-        async (_filePath, streamOrder) => ({
-          streamOrder,
-          meanVolumeDb: -16,
-          maxVolumeDb: -1,
-          recommendedGainDb: 0,
-          suggestion: 'ok'
-        })
+        analyzeSpy
       );
       expect(enriched).toHaveLength(1);
+      expect(analyzeSpy).toHaveBeenCalledTimes(1);
       expect(warnSpy).toHaveBeenCalledTimes(1);
+
+      const rehydrated = await enrichItemsWithAudioAnalysis(
+        items,
+        path.join(tmpDir, 'readonly-cfg'),
+        analyzeSpy
+      );
+      expect(rehydrated).toHaveLength(1);
+      expect(analyzeSpy).toHaveBeenCalledTimes(1);
     } finally {
+      accessSpy.mockRestore();
       writeSpy.mockRestore();
       warnSpy.mockRestore();
       await fs.rm(tmpDir, { recursive: true, force: true });
-      await fs.rm(path.join(os.tmpdir(), 'video-organizer-audio-cache.json'), { force: true });
+      await fs.rm(path.join(os.tmpdir(), 'plex-video-organizer-audio-cache.json'), { force: true });
+    }
+  });
+
+  it('ignores QNAP .@__thumb, Synology @eaDir, hidden dotfiles, and temporary/partial files while honoring .plexignore and .plexmatch', async () => {
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'vo-scan-hidden-'));
+    try {
+      await fs.mkdir(path.join(tmpDir, '.@__thumb'), { recursive: true });
+      await fs.writeFile(
+        path.join(
+          tmpDir,
+          '.@__thumb',
+          'defaultGodzilla vs Kong (2021) 2160p HDR 5.1 x265 10bit Phun Psyz.mkv'
+        ),
+        'thumb'
+      );
+      await fs.writeFile(
+        path.join(
+          tmpDir,
+          '.@__thumb',
+          's100Godzilla vs Kong (2021) 2160p HDR 5.1 x265 10bit Phun Psyz.mkv'
+        ),
+        'thumb'
+      );
+      await fs.mkdir(path.join(tmpDir, '@eaDir'), { recursive: true });
+      await fs.writeFile(path.join(tmpDir, '@eaDir', 'SynologyThumb.mkv'), 'thumb');
+      await fs.writeFile(path.join(tmpDir, '.hidden-movie.mkv'), 'hidden');
+      await fs.writeFile(path.join(tmpDir, '._Real Movie (2024).mkv'), 'appledouble');
+      await fs.writeFile(path.join(tmpDir, '._Real Movie (2024).eng.srt'), 'appledouble-sub');
+      await fs.writeFile(path.join(tmpDir, 'Real Movie (2024).eng.srt.tmp'), 'tmp-sub');
+      await fs.writeFile(path.join(tmpDir, 'Downloading (2024).mkv.!qB'), 'partial');
+      await fs.writeFile(path.join(tmpDir, 'Staging (2024).tmp.mkv'), 'staging');
+      await fs.writeFile(path.join(tmpDir, '.plexignore'), 'Blocked Movie*\n');
+      await fs.writeFile(path.join(tmpDir, 'Blocked Movie (2024).mkv'), 'ignored');
+      await fs.writeFile(path.join(tmpDir, 'Real Movie (2024).mkv'), 'video');
+      await fs.writeFile(
+        path.join(tmpDir, 'Real Movie (2024).spa.srt'),
+        '1\n00:00:01,000 --> 00:00:02,000\nHola\n'
+      );
+
+      const items = await scanInputDirectory(tmpDir, async () => MOCK_PROBE);
+      expect(items).toHaveLength(1);
+      expect(items[0]?.fileName).toBe('Real Movie (2024).mkv');
+      expect(items[0]?.externalSubtitles).toHaveLength(1);
+      expect(items[0]?.externalSubtitles[0]?.relativePath).toBe('Real Movie (2024).spa.srt');
+    } finally {
+      await fs.rm(tmpDir, { recursive: true, force: true });
     }
   });
 });

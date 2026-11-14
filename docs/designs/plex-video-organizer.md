@@ -1,14 +1,14 @@
 # Plex Video Organizer for NAS (Docker)
 
 - **Author:** Franco Gastón Pellegrini
-- **Status:** Proposed
+- **Status:** Implemented
 - **Date:** 2026-11-12
 
 ---
 
 ## Overview
 
-Dockerized NAS web application (with ports, mount paths, and optional API keys configured via `.env`), built with **Vue 3 + Vite+ (`vp`) + SCSS** on the frontend and **Node.js 26+** on the backend, governed by `@francogp/auditor` (`v10.11.2`).
+Dockerized NAS web application (with ports, mount paths, and optional API keys configured via `.env`), built with **Vue 3 + Vite+ (`vp`) + SCSS** on the frontend and **Node.js 26+** on the backend, governed by `@francogp/auditor` (`v10.12.3`).
 
 The system replaces the legacy desktop tools in `O:\ACOMODAR\` (`file-renamer-for-plex` in Java/OMDb and the `mkvpropedit` `.bat` scripts) with a local-network (LAN) web console. It identifies movies (`{imdb-tt...}`) and TV shows (`{tvdb-...}`), lets the user adjust audio and subtitle tracks, validates destination conflicts before writing, and losslessly remuxes video and audio to `.mkv` using `ffmpeg`.
 
@@ -20,7 +20,7 @@ The current workflow relies on Windows scripts coupled to local paths and discon
 2. The `edit-audio-to-*.bat` scripts invoke `mkvpropedit` unconditionally on `v1`/`a1` without inspecting multiple audio tracks or updating the `default` flag.
 3. There is no pre-flight collision check or single-user processing lock on the LAN, risking accidental overwrites or partial files in Plex libraries.
 
-This application unifies scanning, metadata identification, track editing, pre-flight conflict resolution, lossless video/audio `.mkv` remuxing with embedded subtitles in the source directory, atomic/`EXDEV`-safe moves into 5 Plex libraries, and processed-item leftover cleanup inside a single Docker service.
+This application unifies scanning, metadata identification, track editing, pre-flight conflict resolution, lossless video/audio `.mkv` remuxing with embedded subtitles in the source directory, atomic/`EXDEV`-safe moves into 4 Plex libraries (plus backup retention), and processed-item leftover cleanup across a decoupled static `ffmpeg-provider` init container and a rootless `plex-video-organizer` runtime service.
 
 ## Goals
 
@@ -62,10 +62,10 @@ This application unifies scanning, metadata identification, track editing, pre-f
 
 ### 1. Docker Topology and Environment Variables
 
-The system runs as a single Docker container (`node:26-slim` with `ffmpeg`) serving both the built frontend (`dist/`, with assets in `dist/assets/` matching `bundle.distDir` in `.auditor/audit.config.ts`) and the Node.js 26+ native TypeScript REST + SSE backend (`src/server/index.ts`, using `.ts` relative import specifiers and no `enum`/parameter properties).
+The Compose stack (`name: plex-video-organizer`) decouples a static init container (`ffmpeg-provider`: `busybox:1.38.0-musl` + `mwader/static-ffmpeg`) that atomically seeds `/opt/ffmpeg` and initializes `CONFIG_DIR` permissions from the rootless `plex-video-organizer` runtime (`node:26.13.1-alpine3.24`, `read_only: true`, `cap_drop: [ALL]`), serving both the built frontend (`dist/`, including `public/favicon.svg` and pre-compressed assets) and the Node.js 26+ native TypeScript REST + SSE backend (`src/server/index.ts`).
 
-- **`.env` & Permissions:** Defines `APP_PORT`, `DEV_CLIENT_PORT`, `PUID` / `PGID` (applied natively via `user: "${PUID}:${PGID}"` in `docker-compose.yml`), host mount paths (`HOST_CONFIG_PATH`, `HOST_INPUT_PATH`, `HOST_OUTPUT_MOVIES_PATH`, `HOST_OUTPUT_DOCUMENTARIES_PATH`, `HOST_OUTPUT_ANIMATED_MOVIES_PATH`, `HOST_OUTPUT_TV_SHOWS_PATH`, `HOST_OUTPUT_ANIMATED_SERIES_PATH`), and optional API keys (`OMDB_API_KEY`, `TVDB_API_KEY`). Container mount roots (`/data/input` and `/data/output/*`) are validated on startup and treated as the single source of truth.
-- **Persistence:** Active queue items and `revision` persist to `/config/queue.json` for crash inspection, while the single-user LAN lock (`lockOwnerClientId`) is strictly ephemeral in memory so container restarts release any stale lock automatically.
+- **`.env` & Permissions:** Defines `APP_PORT`, `DEV_CLIENT_PORT`, `PUID` / `PGID` (applied natively via `user: "${PUID}:${PGID}"` in `docker-compose.yml`), required host mount paths enforced with `:?` fail-fast interpolation (`CONFIG_DIR`, `INPUT_DIR`, `BACKUP_DIR`, `OUTPUT_MOVIES_DIR`, `OUTPUT_ANIMATED_MOVIES_DIR`, `OUTPUT_TV_SHOWS_DIR`, `OUTPUT_ANIMATED_SERIES_DIR`), and optional API keys (`OMDB_API_KEY`, `TVDB_API_KEY`).
+- **Persistence & Read-Only Fallback:** Active queue items, metadata cache, and audio cache persist under `CONFIG_DIR` (`/config/*.json`), automatically falling back to `os.tmpdir()` (`plex-video-organizer-*.json`) with a single diagnostic warning and startup rehydration whenever `CONFIG_DIR` rejects writes (`EACCES`/`EPERM`/`EROFS`). The single-user LAN lock (`lockOwnerClientId`) remains strictly ephemeral in memory.
 
 ```mermaid
 flowchart TD
@@ -80,14 +80,14 @@ flowchart TD
     API --> Preflight["Pre-Flight Conflict Comparator"]
     Preflight -->|"No conflicts or resolved"| Runner["Job Runner"]
     Runner -->|"1. Lossless V/A remux"| FFmpeg["ffmpeg -> {basename}.organizing.*.tmp.mkv"]
-    FFmpeg -->|"2. ffprobe verify + EXDEV-safe move"| Output["5 Plex Libraries"]
+    FFmpeg -->|"2. ffprobe verify + EXDEV-safe move"| Output["4 Plex Libraries + Backup"]
     Runner -->|"3. End-of-job cleanup"| Cleanup["Remove moved source, matched subs & empty dirs"]
 ```
 
 ### 2. Backend Architecture (`src/domain/` and `src/server/`)
 
 - **Pure Domain Layer (`src/domain/`):**
-  - Literal union types derived from `as const` tuples in `constants.ts` with `valibot` schema parity and branded IDs (`JobId`, `ItemId`, `ImdbId`, `TvdbId`, `TmdbId`, `ClientId`) satisfying `@francogp/domain-type` rules: `MediaKind = 'movie' | 'tv'`, `OutputCategory = 'movies' | 'documentaries' | 'animated-movies' | 'tv-shows' | 'animated-series'`, `JobPhase = 'IDLE' | 'SCANNING' | 'READY' | 'PREFLIGHT_BLOCKED' | 'PROCESSING' | 'ERROR'`, `ConflictDecision = 'overwrite' | 'ignore'`, `SubtitleMergeMode = 'keep-and-add' | 'replace' | 'selected-only'`, and `Iso639_2Code` with quick presets `'spa' | 'eng' | 'jpn' | 'und'`. `MediaKind` independently governs the Plex naming template (`movie` vs `tv`) regardless of `OutputCategory` (allowing `'documentaries'` to hold either).
+  - Literal union types derived from `as const` tuples in `constants.ts` with `valibot` schema parity and branded IDs (`JobId`, `ItemId`, `ImdbId`, `TvdbId`, `TmdbId`, `ClientId`) satisfying `@francogp/domain-type` rules: `MediaKind = 'movie' | 'tv'`, `OutputCategory = 'movies' | 'animated-movies' | 'tv-shows' | 'animated-series'`, `JobPhase = 'IDLE' | 'SCANNING' | 'READY' | 'PREFLIGHT_BLOCKED' | 'PROCESSING' | 'ERROR'`, `ConflictDecision = 'overwrite' | 'ignore'`, `SubtitleMergeMode = 'keep-and-add' | 'replace' | 'selected-only'`, and `Iso639_2Code` with quick presets `'spa' | 'eng' | 'jpn' | 'und'`. `MediaKind` independently governs the Plex naming template (`movie` vs `tv`) regardless of `OutputCategory` (allowing `'documentaries'` to hold either).
   - Tag extractors and Plex standards (aligned with `docs/plex/` and modernized from `MovieFolder.java`): resolution (`480p|720p|1080p|1440p->2k|2160p->4k|4320p->8k`), optional Plex `{edition-<Name>}` (max 32 characters; applied to Movie folder+filename or TV Show root folder only—never season/episode—per `docs/plex/multiple-editions*.md`) vs. ignored scanner bracket tags `[res, Extended, Directors Cut, Unrated, Spanish Audio, HDR, 10bit]`, split-part suffixes (`- cdX`, `- discX`, `- diskX`, `- dvdX`, `- partX`, `- ptX`, up to 8 parts), and filename sanitization (`&` -> `and`, stripping `[\\/:*?"<>|]`).
   - Plex path formatters:
     - Movie: `{Title} ({Year}) {imdb-ttXXXXXXX}[ {edition-...}][ [tags]]/{Title} ({Year}) {imdb-ttXXXXXXX}[ {edition-...}][ [tags]][ - ptX].mkv` (supporting `{tmdb-XXXXXX}` when provided via `.plexmatch`/input, multi-version tags in `[...]` per `docs/plex/multi-version-movies.md`, and preserving split-part suffixes so `pt1`/`pt2` do not falsely collide).
@@ -136,7 +136,7 @@ flowchart TD
   - Dense dashboard guided by `ui-craft-dense-dashboard` (tabular numbers for sizes, bitrates, and progress), `frontend-design`, `design-taste-frontend`, `awesome-design-md`, and `web-design-guidelines`.
   - **Dark & Light Mode:** Semantic SCSS tokens (`oklch`/`color-mix` per `scss-best-practices`), `prefers-color-scheme` default, and persistent manual toggle via `src/client/utils/storage.ts` (`try/catch`-wrapped storage helper).
   - **GSAP Animations:** Queue transitions, modal/panel entrances, and progress indicators animated with GSAP (`gsap-core`, `gsap-frameworks`, `gsap-timeline`, `gsap-performance`, `design-motion-principles`), using `gsap.context()` cleaned up on `onUnmounted`, `gsap.matchMedia()` for `prefers-reduced-motion`, and zero CSS transitions or `transform !important` on GSAP-animated nodes (verified with `auditor:motion`).
-- **Main View:** **Scan** button, dense queue table grouped by movie/series, output category selector (1 of 5), IMDb/TVDB candidate picker, track editor button (with series batch apply), and **Process** button. Displays a read-only lock banner and live SSE progress when another LAN user is running a job.
+- **Main View:** **Scan** button, dense queue table grouped by movie/series, output category selector (1 of 4), IMDb/TVDB candidate picker, track editor button (with series batch apply), and **Process** button. Displays a read-only lock banner and live SSE progress when another LAN user is running a job.
 
 ## Alternatives Considered
 
@@ -176,9 +176,9 @@ flowchart TD
 
 #### 1. Infrastructure, Docker, and Root Config
 
-- **`.env.example`** _(Create)_: Documented template for `APP_PORT`, `DEV_CLIENT_PORT`, `PUID`, `PGID`, `HOST_CONFIG_PATH`, `HOST_INPUT_PATH`, `HOST_OUTPUT_MOVIES_PATH`, `HOST_OUTPUT_DOCUMENTARIES_PATH`, `HOST_OUTPUT_ANIMATED_MOVIES_PATH`, `HOST_OUTPUT_TV_SHOWS_PATH`, `HOST_OUTPUT_ANIMATED_SERIES_PATH`, `OMDB_API_KEY` (optional), and `TVDB_API_KEY` (optional).
-- **`Dockerfile`** _(Create)_: Multi-stage image on `node:26-slim` + `ffmpeg`, building the frontend (`vp build` -> `dist/`) and running `node src/server/index.ts` with configurable `PUID`/`PGID` and `HEALTHCHECK` on `/api/state`.
-- **`docker-compose.yml`** _(Create)_: Single NAS service reading ports, `PUID`/`PGID`, keys, and volume paths from `.env`.
+- **`.env.example`** _(Create)_: Documented template for `APP_PORT`, `DEV_CLIENT_PORT`, `PUID`, `PGID`, `CONFIG_DIR`, `INPUT_DIR`, `BACKUP_DIR`, `OUTPUT_MOVIES_DIR`, `OUTPUT_ANIMATED_MOVIES_DIR`, `OUTPUT_TV_SHOWS_DIR`, `OUTPUT_ANIMATED_SERIES_DIR`, `OMDB_API_KEY` (optional), and `TVDB_API_KEY` (optional).
+- **`Dockerfile`** _(Create)_: Multi-target build separating `ffmpeg-provider` (`busybox:1.38.0-musl` + static `mwader/static-ffmpeg`) and rootless `runtime` (`node:26.13.1-alpine3.24`, `USER 1000:1000`), bundling `dist/` (including `public/favicon.svg`) and `HEALTHCHECK` on `/api/state`.
+- **`docker-compose.yml`** _(Create)_: Compose stack `plex-video-organizer` chaining `ffmpeg-provider` (`service_completed_successfully`) into hardened `plex-video-organizer` (`read_only: true`, `cap_drop: [ALL]`) with fail-fast `:?` `.env` validation.
 - **`package.json`** _(Modify)_: Add runtime dependencies (`vue`, `pinia`, `gsap`, `valibot`, `@vueuse/core`) and devDependencies (`@vitejs/plugin-vue`, `sass`, `vue-tsc`, `@vue/test-utils`, `happy-dom`); update `"build": "npm run auditor:full && vp build && npm run auditor:post-build"` and add `"dev:server": "node --watch --env-file=.env src/server/index.ts"`, `"dev:client": "vp dev"`, and `"start": "node --env-file-if-exists=.env src/server/index.ts"`.
 - **`vite.plugins.ts`** _(Create)_ & **`vite.config.ts`** _(Synced via `npm run auditor:fix`)_: Export `vue()` and `vitePrecompressPlugin()` from `@francogp/auditor`, bind `server.port` to `DEV_CLIENT_PORT` (`5173`), and proxy `/api` (including SSE) to `http://127.0.0.1:${APP_PORT}` (`3000`).
 
@@ -227,7 +227,7 @@ flowchart TD
 - **Unit & Component Tests:** `npm run test:coverage` (`vp test --coverage`), passing all suites with `85%+` coverage (exceeding the `80%` auditor threshold).
 - **Static Analysis & Linting:** `npm run auditor:lint` for fast inner-loop checks during implementation (0 errors, 0 warnings; `auditor:full` runs as part of `npm run build`).
 - **Docker Verification:** `docker compose config && docker compose build`, `docker compose run --rm app ffmpeg -version`, and verifying `GET http://127.0.0.1:${APP_PORT}/api/state` returns HTTP `200`.
-- **End-to-End Integration (Non-Destructive Real Fixtures):** Copy `c:\Users\Franco\Downloads\test\entrada\` into a temporary working directory (e.g., `scratch/e2e-run/entrada/`) and map the 5 output roots under `scratch/e2e-run/salida/{movies,documentaries,animated-movies,tv-shows,animated-series}` so original fixtures remain intact; run a full Scan -> Track Config -> Preflight -> Process cycle and verify output `.mkv` streams/languages via `ffprobe` and preservation of `entrada/` with only processed items removed.
+- **End-to-End Integration (Non-Destructive Real Fixtures):** Copy `c:\Users\Franco\Downloads\test\entrada\` into a temporary working directory (e.g., `scratch/e2e-run/entrada/`) and map `BACKUP_DIR` + the 4 output roots under `scratch/e2e-run/salida/{movies,animated-movies,tv-shows,animated-series}` so original fixtures remain intact; run a full Scan -> Track Config -> Preflight -> Process cycle and verify output `.mkv` streams/languages via `ffprobe` and preservation of `entrada/` with only processed items removed.
 
 ## Production Deployment & Lifecycle Scripts (`deploy-install.sh` / `deploy-update.sh`)
 
@@ -238,7 +238,7 @@ To support reproducible, isolated Docker deployments on NAS/Linux hosts, product
 2. **`deploy-install.sh` (`sudo ./deploy-install.sh`):**
    - Verifies/installs `docker` and `docker-compose-v2`, enables `docker` in `systemd`, and adds `REAL_USER` to the `docker` group.
    - Initializes `.env` from `.env.example` if missing and ensures `PUID`/`PGID` and host mount directories exist.
-   - Builds and starts the `video-organizer` container via `docker compose up -d --build` (`restart: unless-stopped`).
+   - Builds and starts the `plex-video-organizer` container via `docker compose up -d --build` (`restart: unless-stopped`).
 3. **`deploy-update.sh` (`./deploy-update.sh`):**
    - Pulls latest commits cleanly (`git fetch origin <branch>` + `git reset --hard origin/<branch>`, preserving untracked `.env`, `data/`, and media mounts).
    - Rebuilds and recreates the Docker container (`docker compose up -d --build --remove-orphans`) and verifies `/api/state` health.

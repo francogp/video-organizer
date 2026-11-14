@@ -5,7 +5,7 @@ import path from 'node:path';
 
 import { describe, expect, it, vi } from 'vite-plus/test';
 
-import { asClientId } from '../../src/domain/types.ts';
+import { asClientId, asItemId } from '../../src/domain/types.ts';
 import { loadConfig } from '../../src/server/config.ts';
 import { createRequestHandler } from '../../src/server/routes.ts';
 import { JobRunner } from '../../src/server/services/jobRunner.ts';
@@ -98,6 +98,10 @@ describe('JobRunner & HTTP routes', () => {
     await fs.mkdir(configDir, { recursive: true });
     await fs.mkdir(distDir, { recursive: true });
     await fs.writeFile(path.join(distDir, 'index.html'), '<html><body>OK</body></html>');
+    await fs.writeFile(
+      path.join(distDir, 'favicon.svg'),
+      '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"></svg>'
+    );
 
     const srcFile = path.join(inputDir, 'Movie.2024.mkv');
     await fs.writeFile(srcFile, 'video-bytes');
@@ -163,6 +167,20 @@ describe('JobRunner & HTTP routes', () => {
       const indexRes = await fetch(`${baseUrl}/`);
       expect(indexRes.status).toBe(200);
       await expect(indexRes.text()).resolves.toContain('OK');
+
+      const faviconRes = await fetch(`${baseUrl}/favicon.svg`);
+      expect(faviconRes.status).toBe(200);
+      expect(faviconRes.headers.get('content-type')).toContain('image/svg+xml');
+      await expect(faviconRes.text()).resolves.toContain('<svg');
+
+      const repoRoot = path.resolve(import.meta.dirname, '../..');
+      const repoIndexHtml = await fs.readFile(path.join(repoRoot, 'index.html'), 'utf8');
+      expect(repoIndexHtml).toContain('<link rel="icon" type="image/svg+xml" href="/favicon.svg"');
+      const repoFaviconSvg = await fs.readFile(
+        path.join(repoRoot, 'public', 'favicon.svg'),
+        'utf8'
+      );
+      expect(repoFaviconSvg).toContain('<svg');
 
       const spaRes = await fetch(`${baseUrl}/some/client/route`);
       expect(spaRes.status).toBe(200);
@@ -434,6 +452,141 @@ describe('JobRunner & HTTP routes', () => {
       expect(stateJson.preferredLanguages).toEqual(['eng', 'spa', 'native']);
     } finally {
       await new Promise<void>((resolve) => server.close(() => resolve()));
+      await fs.rm(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it('falls back to os.tmpdir() for queue.json when CONFIG_DIR throws EACCES, emits a single warn log, and rehydrates on init()', async () => {
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'vo-queue-eacces-'));
+    const inputDir = path.join(tmpDir, 'input');
+    const readonlyConfigDir = path.join(tmpDir, 'readonly-cfg');
+    const fallbackQueuePath = path.join(os.tmpdir(), 'plex-video-organizer-queue.json');
+    await fs.mkdir(inputDir, { recursive: true });
+    await fs.mkdir(readonlyConfigDir, { recursive: true });
+    await fs.rm(fallbackQueuePath, { force: true });
+
+    const srcFile = path.join(inputDir, 'Movie.2024.mkv');
+    await fs.writeFile(srcFile, 'video-bytes');
+    await fs.writeFile(
+      path.join(readonlyConfigDir, 'queue.json'),
+      JSON.stringify({
+        revision: 2,
+        items: [
+          {
+            id: 'item-1',
+            sourcePath: srcFile,
+            relativePath: 'Movie.2024.mkv',
+            fileName: 'Movie.2024.mkv',
+            mediaKind: 'movie',
+            category: 'movies',
+            include: false,
+            parsedTitle: 'Movie',
+            parsedYear: 2024,
+            tags: [],
+            episodeOrder: 'aired',
+            probe: {
+              formatName: 'matroska',
+              durationSeconds: 100,
+              sizeBytes: 11,
+              bitrateBps: 1000,
+              videoStreams: [{ index: 0, codecName: 'h264', width: 1920, height: 1080 }],
+              audioStreams: [],
+              subtitleStreams: []
+            },
+            externalSubtitles: [],
+            trackSelection: {
+              audioTracks: [],
+              subtitleMergeMode: 'keep-and-add',
+              includedInternalSubtitles: [],
+              externalSubtitleOrder: [],
+              needsUserPrompt: false
+            },
+            candidates: [],
+            selectedMetadata: { title: 'Movie', year: 2024, imdbId: 'tt1234567', source: 'imdb' },
+            warnings: []
+          }
+        ]
+      })
+    );
+
+    const cfg = loadConfig({
+      CONFIG_DIR: readonlyConfigDir,
+      INPUT_DIR: inputDir,
+      OUTPUT_MOVIES_DIR: tmpDir,
+      OUTPUT_ANIMATED_MOVIES_DIR: tmpDir,
+      OUTPUT_TV_SHOWS_DIR: tmpDir,
+      OUTPUT_ANIMATED_SERIES_DIR: tmpDir
+    });
+
+    const runner1 = new JobRunner(cfg);
+    await runner1.init();
+
+    const makeEacces = (): Error =>
+      Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' });
+    const isBlockedCfg = (target: unknown): boolean => String(target).includes('readonly-cfg');
+
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const origMkdir = fs.mkdir.bind(fs);
+    const origWriteFile = fs.writeFile.bind(fs);
+    const origReadFile = fs.readFile.bind(fs);
+    const origAccess = fs.access.bind(fs);
+
+    const mkdirSpy = vi.spyOn(fs, 'mkdir').mockImplementation(async (p, opts) => {
+      if (isBlockedCfg(p)) {
+        throw makeEacces();
+      }
+      return origMkdir(p, opts);
+    });
+    const writeSpy = vi.spyOn(fs, 'writeFile').mockImplementation(async (p, d, o) => {
+      if (isBlockedCfg(p)) {
+        throw makeEacces();
+      }
+      return origWriteFile(p, d, o);
+    });
+    const readSpy = vi.spyOn(fs, 'readFile').mockImplementation(async (p, o) => {
+      if (isBlockedCfg(p)) {
+        throw makeEacces();
+      }
+      return origReadFile(p, o);
+    });
+    const accessSpy = vi.spyOn(fs, 'access').mockImplementation(async (p, mode) => {
+      if (isBlockedCfg(p)) {
+        throw makeEacces();
+      }
+      return origAccess(p, mode);
+    });
+
+    try {
+      await runner1.patchItem(asClientId('client-1'), 2, asItemId('item-1'), { edition: 'IMAX' });
+      await runner1.patchItem(asClientId('client-1'), 3, asItemId('item-1'), {
+        edition: 'Unrated'
+      });
+
+      const state1 = runner1.getState();
+      expect(state1.phase).not.toBe('ERROR');
+      expect(state1.revision).toBe(4);
+      const cfgWarnLogs = (state1.logs ?? []).filter(
+        (l) => l.level === 'warn' && l.message.includes('CONFIG_DIR')
+      );
+      expect(cfgWarnLogs).toHaveLength(1);
+      expect(warnSpy).toHaveBeenCalledTimes(1);
+
+      const persistedRaw = await origReadFile(fallbackQueuePath, 'utf8');
+      const persisted = JSON.parse(persistedRaw) as { readonly revision: number };
+      expect(persisted.revision).toBe(4);
+
+      const runner2 = new JobRunner(cfg);
+      await runner2.init();
+      const state2 = runner2.getState();
+      expect(state2.revision).toBe(4);
+      expect(state2.items[0]?.edition).toBe('Unrated');
+    } finally {
+      accessSpy.mockRestore();
+      readSpy.mockRestore();
+      writeSpy.mockRestore();
+      mkdirSpy.mockRestore();
+      warnSpy.mockRestore();
+      await fs.rm(fallbackQueuePath, { force: true });
       await fs.rm(tmpDir, { recursive: true, force: true });
     }
   });

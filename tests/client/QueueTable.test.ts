@@ -305,6 +305,16 @@ describe('QueueTable', () => {
       props: { items: [SAMPLE_ITEM, ep1, ep2], disabled: false }
     });
 
+    const toolbarText = wrapper.find('.vo-table-toolbar').text();
+    expect(toolbarText).not.toContain('Select Visible');
+    expect(toolbarText).not.toContain('Deselect Visible');
+
+    const headerSelectAll = wrapper.find('#vo-select-all-visible');
+    await headerSelectAll.setValue(true);
+    expect(wrapper.find('.vo-bulk-bar').text()).toContain('3 selected');
+    await headerSelectAll.setValue(false);
+    expect(wrapper.find('.vo-bulk-bar').exists()).toBe(false);
+
     const folderSelect = wrapper.find('select#vo-select-folder');
     await folderSelect.setValue('ShowDir');
 

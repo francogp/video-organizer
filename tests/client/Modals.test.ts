@@ -193,6 +193,12 @@ describe('Client Modals & App', () => {
     const wrapper = mount(App);
     await new Promise((r) => setTimeout(r, 20));
     expect(wrapper.text()).toContain('Plex Video Organizer');
+    const brandIcon = wrapper.find('img.vo-brand-icon');
+    expect(brandIcon.exists()).toBe(true);
+    expect(brandIcon.attributes('src')).toBe('/favicon.svg');
+    expect(brandIcon.attributes('alt')).toBe('');
+    expect(brandIcon.attributes('width')).toBe('28');
+    expect(brandIcon.attributes('height')).toBe('28');
     wrapper.unmount();
 
     const NullMotion = defineComponent({

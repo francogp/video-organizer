@@ -313,6 +313,14 @@ function handleAddPreferredLanguage(evt: Event): void {
       <div class="vo-header-left">
         <div>
           <div class="vo-title-row">
+            <img
+              :src="'/favicon.svg'"
+              alt=""
+              width="28"
+              height="28"
+              decoding="async"
+              class="vo-brand-icon"
+            />
             <h1>Plex Video Organizer</h1>
             <span class="vo-badge vo-badge--compact vo-mono" title="Application version">
               {{ appSemver }}
@@ -607,7 +615,7 @@ function handleAddPreferredLanguage(evt: Event): void {
           @bulk-category="handleBulkCategory"
           @change-audio-normalization="
             (item, audioNormalization: AudioNormalizationConfig) =>
-              patchItemAndRefresh(item.id, { audioNormalization })
+              store.patchItem(item.id, { audioNormalization })
           "
           @bulk-audio-normalization="handleBulkAudioNormalization"
           @inspect-tracks="(item) => (inspectingItem = item)"
@@ -726,6 +734,13 @@ function handleAddPreferredLanguage(evt: Event): void {
   flex-wrap: wrap;
   align-items: center;
   gap: var(--vo-space-2);
+}
+
+.vo-brand-icon {
+  border-radius: var(--vo-radius-sm);
+  flex: none;
+  inline-size: 1.75rem;
+  block-size: 1.75rem;
 }
 
 .vo-phase-badge {
