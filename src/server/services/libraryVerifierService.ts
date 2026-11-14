@@ -356,6 +356,22 @@ function computePercent(completed: number, total: number): number {
 }
 
 /** Scans all configured output libraries and returns only non-compliant entries plus full analysis counts. */
+function computeEtaSeconds(
+  startedAtMs: number,
+  completed: number,
+  total: number
+): number | undefined {
+  if (completed <= 0 || completed >= total) {
+    return undefined;
+  }
+  const elapsedSeconds = (performance.now() - startedAtMs) / 1000;
+  if (elapsedSeconds <= 0) {
+    return undefined;
+  }
+  const remaining = total - completed;
+  return Math.max(0, Math.round((elapsedSeconds / completed) * remaining));
+}
+
 export async function scanLibrariesForCompliance(
   config: AppConfig,
   onLog?: VerifierLogCallback,
@@ -397,6 +413,7 @@ export async function scanLibrariesForCompliance(
 
   const totalLibraries = discovered.length;
   const totalUnits = totalRootFolders > 0 ? totalRootFolders : Math.max(1, totalLibraries);
+  const startedAtMs = performance.now();
   let completedUnits = 0;
   onProgress?.({
     completed: 0,
@@ -437,7 +454,9 @@ export async function scanLibrariesForCompliance(
               completed: completedUnits,
               total: totalUnits,
               percent: computePercent(completedUnits, totalUnits),
-              stageLabel: `${category}: ${rootName}`
+              stageLabel: category,
+              currentFile: rootName,
+              etaSeconds: computeEtaSeconds(startedAtMs, completedUnits, totalUnits)
             });
           }
           return {
@@ -513,7 +532,9 @@ export async function scanLibrariesForCompliance(
             completed: completedUnits,
             total: totalUnits,
             percent: computePercent(completedUnits, totalUnits),
-            stageLabel: `${category}: ${rootName}`
+            stageLabel: category,
+            currentFile: rootName,
+            etaSeconds: computeEtaSeconds(startedAtMs, completedUnits, totalUnits)
           });
         }
         return entry;
@@ -703,6 +724,7 @@ export async function applyVerifierRenames(
   let renamedDirs = 0;
   const failures: VerifierFixFailure[] = [];
   const total = entries.length;
+  const startedAtMs = performance.now();
 
   onProgress?.({
     completed: 0,
@@ -712,6 +734,14 @@ export async function applyVerifierRenames(
   });
 
   for (const [index, entry] of entries.entries()) {
+    onProgress?.({
+      completed: index,
+      total,
+      percent: computePercent(index, total),
+      stageLabel: entry.category,
+      currentFile: entry.currentRootName,
+      etaSeconds: computeEtaSeconds(startedAtMs, index, total)
+    });
     const libraryRoot = mountPaths[entry.category];
     try {
       const counts = await applyEntrySteps(libraryRoot, entry, onLog);
@@ -733,7 +763,9 @@ export async function applyVerifierRenames(
       completed,
       total,
       percent: computePercent(completed, total),
-      stageLabel: `Processed ${entry.currentRootName}`
+      stageLabel: entry.category,
+      currentFile: entry.currentRootName,
+      etaSeconds: computeEtaSeconds(startedAtMs, completed, total)
     });
   }
 

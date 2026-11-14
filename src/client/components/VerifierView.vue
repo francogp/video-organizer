@@ -10,7 +10,11 @@ import type {
   VerifierRenameStep,
   VerifierState
 } from '../../domain/types.ts';
-import { extractExternalIdLinks, splitRelativePathSegments } from '../utils/formatters.ts';
+import {
+  extractExternalIdLinks,
+  formatEta,
+  splitRelativePathSegments
+} from '../utils/formatters.ts';
 import { areAllVisibleRowsSelected } from './table/tableQueryCore.ts';
 import type { TableColumnDef, TableWorkerRowInput } from './table/tableTypes.js';
 import { useTableWorker } from './table/useTableWorker.js';
@@ -284,19 +288,28 @@ function buildRenamePlanGroups(steps: readonly VerifierRenameStep[]): readonly R
     >
       <template v-if="props.state.scanning || props.state.fixing">
         <div class="vo-progress__stack">
-          <div class="vo-progress__meta vo-mono">
-            <template v-if="props.state.progress && props.state.progress.total > 0">
-              {{ props.state.fixing ? 'Fixing' : 'Scanning' }} ·
-              {{ props.state.progress.completed }}/{{ props.state.progress.total }} ({{
-                props.state.progress.percent
-              }}%){{
-                props.state.progress.stageLabel ? ` · ${props.state.progress.stageLabel}` : ''
-              }}
-            </template>
-            <template v-else>
-              {{ props.state.fixing ? 'Fixing' : 'Scanning' }} ·
-              {{ props.state.progress?.stageLabel || 'Discovering libraries...' }}
-            </template>
+          <div class="vo-progress__row">
+            <div class="vo-progress__meta vo-mono">
+              <template v-if="props.state.progress && props.state.progress.total > 0">
+                {{ props.state.fixing ? 'Fixing' : 'Scanning' }} ·
+                {{ props.state.progress.completed }}/{{ props.state.progress.total }} ({{
+                  props.state.progress.percent
+                }}%){{
+                  props.state.progress.etaSeconds !== undefined
+                    ? ` · ${formatEta(props.state.progress.etaSeconds)}`
+                    : ''
+                }}{{
+                  props.state.progress.stageLabel ? ` · ${props.state.progress.stageLabel}` : ''
+                }}
+              </template>
+              <template v-else>
+                {{ props.state.fixing ? 'Fixing' : 'Scanning' }} ·
+                {{ props.state.progress?.stageLabel || 'Discovering libraries...' }}
+              </template>
+            </div>
+          </div>
+          <div v-if="props.state.progress?.currentFile" class="vo-progress__file vo-mono">
+            {{ props.state.progress.currentFile }}
           </div>
           <progress
             v-if="props.state.progress && props.state.progress.total > 0"

@@ -1,5 +1,5 @@
 {
-  "version": "1.0.1-build.20261113-203001",
+  "version": "1.0.2-build.20261113-212318",
   "type": "module",
   "scripts": {
     "check": "npm run auditor:lint",

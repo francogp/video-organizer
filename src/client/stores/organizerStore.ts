@@ -271,6 +271,7 @@ export const useOrganizerStore = defineStore('organizer', () => {
         activeJob.value = {
           ...activeJob.value,
           currentItemId: prog.itemId ?? activeJob.value.currentItemId,
+          currentFile: prog.currentFile ?? activeJob.value.currentFile,
           totalItems: prog.totalItems ?? activeJob.value.totalItems,
           completedItems: prog.completedItems ?? activeJob.value.completedItems,
           currentPercent: prog.percent,

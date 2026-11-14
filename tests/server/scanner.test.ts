@@ -2,7 +2,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
-import { describe, expect, it } from 'vite-plus/test';
+import { describe, expect, it, vi } from 'vite-plus/test';
 
 import { asIso639_2Code, type MediaProbeSummary } from '../../src/domain/types.ts';
 import {
@@ -362,6 +362,54 @@ describe('scanner', () => {
       expect(abortedScan).toEqual([]);
     } finally {
       await fs.rm(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it('preserves leading bracketed titles like [REC] when scanning input files', async () => {
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'vo-scan-rec-'));
+    try {
+      await fs.writeFile(path.join(tmpDir, '[REC] 2 (2009) [1080p].mkv'), 'video');
+      const items = await scanInputDirectory(tmpDir, async () => MOCK_PROBE);
+      expect(items).toHaveLength(1);
+      expect(items[0]?.parsedTitle).toBe('[REC] 2');
+      expect(items[0]?.parsedYear).toBe(2009);
+    } finally {
+      await fs.rm(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it('completes audio enrichment and falls back to tmpdir when audio-cache.json throws EACCES', async () => {
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'vo-scan-eacces-'));
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const origWriteFile = fs.writeFile.bind(fs);
+    const writeSpy = vi.spyOn(fs, 'writeFile').mockImplementation(async (p, d, o) => {
+      if (typeof p === 'string' && p.includes('readonly-cfg')) {
+        throw Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' });
+      }
+      return origWriteFile(p, d, o);
+    });
+
+    try {
+      await fs.writeFile(path.join(tmpDir, 'Movie.2020.mkv'), 'video');
+      const items = await scanInputDirectory(tmpDir, async () => MOCK_PROBE);
+      const enriched = await enrichItemsWithAudioAnalysis(
+        items,
+        path.join(tmpDir, 'readonly-cfg'),
+        async (_filePath, streamOrder) => ({
+          streamOrder,
+          meanVolumeDb: -16,
+          maxVolumeDb: -1,
+          recommendedGainDb: 0,
+          suggestion: 'ok'
+        })
+      );
+      expect(enriched).toHaveLength(1);
+      expect(warnSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      writeSpy.mockRestore();
+      warnSpy.mockRestore();
+      await fs.rm(tmpDir, { recursive: true, force: true });
+      await fs.rm(path.join(os.tmpdir(), 'video-organizer-audio-cache.json'), { force: true });
     }
   });
 });

@@ -25,7 +25,8 @@ const UNRATED_REGEX = /\bunrated\b/i;
 const SPANISH_AUDIO_REGEX = /\b(latino|espa[nñ]ol|spanish[\s._-]*audio)\b/i;
 const HDR_REGEX = /\bhdr(?:10\+?)?\b/i;
 const TEN_BIT_REGEX = /\b10\s*-?\s*bit\b/i;
-const SPLIT_PART_REGEX = /(?:^|[\s._-])(cd|disc|disk|dvd|part|pt)\s*([1-8])(?=$|[\s._-])/i;
+const SPLIT_PART_REGEX =
+  /(?:(?:[\s._]+-\s*|[\s._-])(cd|disc|disk|dvd|pt)|(?:-\s*|[._])(part))\s*([1-8])(?:\s*(?:\[[^\]]+\]|\{[^}]+\}))*\s*$/i;
 
 const WIDTH_4K_MIN = 3800;
 const WIDTH_2K_MIN = 2500;
@@ -35,17 +36,19 @@ const TEN_BIT_DEPTH = 10;
 
 export { sanitizePlexSegment };
 
-/** Extracts a Plex split-part suffix (e.g. `pt1`, `cd2`) when present, up to part 8. */
+/** Extracts a Plex split-part suffix (e.g. `pt1`, `cd2`) when present at the end, up to part 8. */
 export function extractSplitPart(nameWithoutExt: string): string | undefined {
   const match = SPLIT_PART_REGEX.exec(nameWithoutExt);
-  if (!match?.[1] || !match[2]) {
+  const label = match?.[1] ?? match?.[2];
+  const rawNumber = match?.[3];
+  if (!label || !rawNumber) {
     return undefined;
   }
-  const partNum = Number(match[2]);
+  const partNum = Number(rawNumber);
   if (!Number.isInteger(partNum) || partNum < 1 || partNum > PLEX_MAX_SPLIT_PARTS) {
     return undefined;
   }
-  return `${match[1].toLowerCase()}${String(partNum)}`;
+  return `${label.toLowerCase()}${String(partNum)}`;
 }
 
 function inferResolutionFromProbe(probe?: MediaProbeSummary): string | undefined {

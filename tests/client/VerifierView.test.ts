@@ -247,4 +247,33 @@ describe('VerifierView', () => {
       }
     ]);
   });
+
+  it('renders 3-line progress stack with ETA and currentFile while scanning', () => {
+    const state: VerifierState = {
+      scanning: true,
+      fixing: false,
+      progress: {
+        completed: 12,
+        total: 100,
+        percent: 12,
+        stageLabel: 'movies',
+        currentFile: 'Elysium (2013) {imdb-tt1535108} [4k, HDR, 10bit]',
+        etaSeconds: 45
+      },
+      summary: null,
+      entries: [],
+      lastFixResult: null
+    };
+
+    const wrapper = mount(VerifierView, {
+      props: { state, disabled: false }
+    });
+
+    expect(wrapper.find('.vo-progress__meta').text()).toContain('Scanning · 12/100 (12%)');
+    expect(wrapper.find('.vo-progress__meta').text()).toContain('movies');
+    expect(wrapper.find('.vo-progress__file').text()).toBe(
+      'Elysium (2013) {imdb-tt1535108} [4k, HDR, 10bit]'
+    );
+    expect(wrapper.find('progress.vo-progress__bar').attributes('value')).toBe('12');
+  });
 });

@@ -1,4 +1,5 @@
 import { promises as fs } from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 
 import { METADATA_CACHE_TTL_MS } from '../../../domain/constants.ts';
@@ -37,9 +38,12 @@ interface BucketValueMap {
 
 const CACHE_FILENAME = 'metadata-cache.json';
 const CACHE_VERSION = 2;
+const PERSIST_DEBOUNCE_MS = 250;
 
 let configuredCachePath: string | undefined;
 let persistChain: Promise<void> = Promise.resolve();
+let persistTimer: ReturnType<typeof setTimeout> | undefined;
+let permissionWarned = false;
 
 const memoryCache: {
   movieSearch: Map<string, CacheEnvelope<readonly MetadataCandidate[]>>;
@@ -104,35 +108,81 @@ function serializeBucket<T>(
   return out;
 }
 
-function schedulePersist(): void {
+function isPermissionError(err: unknown): boolean {
+  const code = (err as NodeJS.ErrnoException | undefined)?.code;
+  return code === 'EACCES' || code === 'EPERM';
+}
+
+async function writeCacheAtomically(targetPath: string, payloadJson: string): Promise<void> {
+  await fs.mkdir(path.dirname(targetPath), { recursive: true });
+  const tmpPath = `${targetPath}.tmp`;
+  await fs.writeFile(tmpPath, payloadJson, 'utf8');
+  await fs.rename(tmpPath, targetPath);
+}
+
+async function flushPersist(): Promise<void> {
   const targetPath = configuredCachePath;
   if (!targetPath) {
     return;
   }
-  persistChain = persistChain.then(async () => {
-    try {
-      const nowMs = Temporal.Now.instant().epochMilliseconds;
-      const payload: SerializedMetadataCache = {
-        version: CACHE_VERSION,
-        movieSearch: serializeBucket(memoryCache.movieSearch, nowMs),
-        movieById: serializeBucket(memoryCache.movieById, nowMs),
-        tvSearch: serializeBucket(memoryCache.tvSearch, nowMs),
-        seriesById: serializeBucket(memoryCache.seriesById, nowMs),
-        episodeMaps: serializeBucket(memoryCache.episodeMaps, nowMs)
-      };
-      await fs.mkdir(path.dirname(targetPath), { recursive: true });
-      const tmpPath = `${targetPath}.tmp`;
-      await fs.writeFile(tmpPath, JSON.stringify(payload, null, 2), 'utf8');
-      await fs.rename(tmpPath, targetPath);
-    } catch (err) {
-      console.warn('Metadata cache persistence failed:', err);
+  const nowMs = Temporal.Now.instant().epochMilliseconds;
+  const payload: SerializedMetadataCache = {
+    version: CACHE_VERSION,
+    movieSearch: serializeBucket(memoryCache.movieSearch, nowMs),
+    movieById: serializeBucket(memoryCache.movieById, nowMs),
+    tvSearch: serializeBucket(memoryCache.tvSearch, nowMs),
+    seriesById: serializeBucket(memoryCache.seriesById, nowMs),
+    episodeMaps: serializeBucket(memoryCache.episodeMaps, nowMs)
+  };
+  const payloadJson = JSON.stringify(payload, null, 2);
+
+  try {
+    await writeCacheAtomically(targetPath, payloadJson);
+  } catch (err) {
+    const fallbackPath = path.join(os.tmpdir(), `video-organizer-${CACHE_FILENAME}`);
+    if (isPermissionError(err) && targetPath !== fallbackPath) {
+      if (!permissionWarned) {
+        permissionWarned = true;
+        const uid = process.getuid?.() ?? 'unknown';
+        const gid = process.getgid?.() ?? 'unknown';
+        console.warn(
+          `Metadata cache directory is not writable (${path.dirname(targetPath)} for uid=${String(uid)} gid=${String(gid)}). Falling back to ${fallbackPath}.`
+        );
+      }
+      configuredCachePath = fallbackPath;
+      try {
+        await writeCacheAtomically(fallbackPath, payloadJson);
+      } catch (fallbackErr) {
+        console.warn('Metadata cache fallback persistence failed:', fallbackErr);
+      }
+      return;
     }
-  });
+    console.warn('Metadata cache persistence failed:', err);
+  }
+}
+
+function schedulePersist(): void {
+  if (!configuredCachePath) {
+    return;
+  }
+  if (persistTimer !== undefined) {
+    clearTimeout(persistTimer);
+  }
+  persistTimer = setTimeout(() => {
+    persistTimer = undefined;
+    persistChain = persistChain.then(() => flushPersist());
+  }, PERSIST_DEBOUNCE_MS);
 }
 
 /** Configures persistent disk caching in `configDir` and loads valid cached entries. */
 export async function configureMetadataCache(configDir: string): Promise<void> {
+  if (persistTimer !== undefined) {
+    clearTimeout(persistTimer);
+    persistTimer = undefined;
+    persistChain = persistChain.then(() => flushPersist());
+  }
   await persistChain;
+  permissionWarned = false;
   configuredCachePath = path.join(configDir, CACHE_FILENAME);
   clearAllBuckets();
   try {

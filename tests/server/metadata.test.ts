@@ -739,4 +739,33 @@ describe('metadata clients', () => {
     const movieResults = await searchMovies('Spirited Away', 2001, 'omdb-key', mockFetch);
     expect(movieResults[0]?.isAnimated).toBe(true);
   });
+
+  it('falls back to os.tmpdir() once when metadata cache directory throws EACCES', async () => {
+    const fsPromises = (await import('node:fs')).promises;
+    const osMod = await import('node:os');
+    const pathMod = await import('node:path');
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const eacces = Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' });
+    const origWriteFile = fsPromises.writeFile.bind(fsPromises);
+    const writeSpy = vi.spyOn(fsPromises, 'writeFile').mockImplementation(async (p, d, o) => {
+      if (typeof p === 'string' && p.includes('readonly-config-dir')) {
+        throw eacces;
+      }
+      return origWriteFile(p, d, o);
+    });
+
+    try {
+      await configureMetadataCache(pathMod.join(osMod.tmpdir(), 'readonly-config-dir'));
+      setCachedMetadata('movieSearch', 'test-eacces-1', []);
+      setCachedMetadata('movieSearch', 'test-eacces-2', []);
+      await new Promise((r) => setTimeout(r, 320));
+      expect(warnSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      writeSpy.mockRestore();
+      warnSpy.mockRestore();
+      await fsPromises.rm(pathMod.join(osMod.tmpdir(), 'video-organizer-metadata-cache.json'), {
+        force: true
+      });
+    }
+  });
 });

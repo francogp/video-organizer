@@ -139,4 +139,70 @@ describe('libraryVerifier domain', () => {
     expect(movieEntry?.issues).toContain('UNRESOLVED_METADATA');
     expect(movieEntry?.issues).toContain('MISSING_PROVIDER_ID');
   });
+
+  it('strips trailing video extensions from movie folder names without polluting cleanTitle', () => {
+    const parsed = parseLibraryRootName('Elysium (2013) {imdb-tt1535108} [4k, HDR, 10bit].mkv');
+    expect(parsed.cleanTitle).toBe('Elysium');
+    expect(parsed.year).toBe(2013);
+    expect(parsed.imdbId).toBe(asImdbId('tt1535108'));
+    expect(parsed.bracketTags).toEqual(['4k', 'HDR', '10bit']);
+
+    const entry = buildMovieVerificationEntry({
+      category: 'movies',
+      currentRootName: 'Elysium (2013) {imdb-tt1535108} [4k, HDR, 10bit].mkv',
+      resolvedTitle: parsed.cleanTitle,
+      resolvedYear: parsed.year,
+      imdbId: parsed.imdbId,
+      files: ['Elysium (2013) {imdb-tt1535108} [4k, HDR, 10bit].mkv']
+    });
+    expect(entry?.expectedRootName).toBe('Elysium (2013) {imdb-tt1535108} [4k, HDR, 10bit]');
+    expect(entry?.steps).toEqual([
+      {
+        kind: 'root-dir',
+        fromRelative: 'Elysium (2013) {imdb-tt1535108} [4k, HDR, 10bit].mkv',
+        toRelative: 'Elysium (2013) {imdb-tt1535108} [4k, HDR, 10bit]'
+      }
+    ]);
+  });
+
+  it('preserves leading bracketed titles like [REC] and ignores Part 1/2 inside movie titles', () => {
+    const rec2 = parseLibraryRootName('[REC] 2 (2009) {imdb-tt1245112} [1080p]');
+    expect(rec2.cleanTitle).toBe('[REC] 2');
+    expect(rec2.year).toBe(2009);
+    expect(rec2.bracketTags).toEqual(['1080p']);
+
+    const rec3 = parseLibraryRootName('[REC] 3 Genesis (2012) {imdb-tt1649444} [1080p]');
+    expect(rec3.cleanTitle).toBe('[REC] 3 Genesis');
+    expect(rec3.year).toBe(2012);
+    expect(rec3.bracketTags).toEqual(['1080p']);
+
+    expect(
+      buildMovieVerificationEntry({
+        category: 'movies',
+        currentRootName: '[REC] 2 (2009) {imdb-tt1245112} [1080p]',
+        resolvedTitle: rec2.cleanTitle,
+        resolvedYear: rec2.year,
+        imdbId: rec2.imdbId,
+        files: [
+          '[REC] 2 (2009) {imdb-tt1245112} [1080p].mkv',
+          '[REC] 2 (2009) {imdb-tt1245112} [1080p].spa.srt'
+        ]
+      })
+    ).toBeNull();
+
+    expect(
+      buildMovieVerificationEntry({
+        category: 'movies',
+        currentRootName:
+          'Harry Potter and the Deathly Hallows Part 1 (2010) {imdb-tt0926084} [1080p]',
+        resolvedTitle: 'Harry Potter and the Deathly Hallows Part 1',
+        resolvedYear: 2010,
+        imdbId: asImdbId('tt0926084'),
+        files: [
+          'Harry Potter and the Deathly Hallows Part 1 (2010) {imdb-tt0926084} [1080p].mkv',
+          'Harry Potter and the Deathly Hallows Part 1 (2010) {imdb-tt0926084} [1080p].spa.srt'
+        ]
+      })
+    ).toBeNull();
+  });
 });

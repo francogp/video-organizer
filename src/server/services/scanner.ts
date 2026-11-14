@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 
 import {
@@ -484,7 +485,10 @@ function cleanTitleFromName(rawName: string): { readonly title: string; readonly
   ].filter((idx): idx is number => typeof idx === 'number' && idx > 0);
 
   let title = cutCandidates.length > 0 ? rawName.slice(0, Math.min(...cutCandidates)) : rawName;
-  title = title
+  const leadingBracketMatch = /^(\[[^\]]+\])/.exec(title);
+  const leadingBracket = leadingBracketMatch?.[1] ?? '';
+  const remainderTitle = leadingBracket ? title.slice(leadingBracket.length) : title;
+  const cleanedRemainder = remainderTitle
     .replaceAll(/\[[^\]]*\]/g, ' ')
     .replaceAll(/\{[^}]*\}/g, ' ')
     .replaceAll(/[._]/g, ' ')
@@ -492,6 +496,7 @@ function cleanTitleFromName(rawName: string): { readonly title: string; readonly
     .replaceAll(/[\s-]+$/g, '')
     .replaceAll(/\s+/g, ' ')
     .trim();
+  title = `${leadingBracket} ${cleanedRemainder}`.trim();
   return { title: title || rawName, year };
 }
 
@@ -854,8 +859,26 @@ export async function enrichItemsWithAudioAnalysis(
   await Promise.all(Array.from({ length: workerCount }, () => worker()));
 
   if (cacheDirty) {
-    await fs.mkdir(configDir, { recursive: true });
-    await fs.writeFile(cachePath, JSON.stringify([...cache.entries()], null, 2), 'utf8');
+    const serializedCache = JSON.stringify([...cache.entries()], null, 2);
+    try {
+      await fs.mkdir(configDir, { recursive: true });
+      await fs.writeFile(cachePath, serializedCache, 'utf8');
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException | undefined)?.code;
+      if (code === 'EACCES' || code === 'EPERM') {
+        const fallbackPath = path.join(os.tmpdir(), 'video-organizer-audio-cache.json');
+        console.warn(
+          `Audio cache path is not writable (${cachePath}). Falling back to ${fallbackPath}.`
+        );
+        try {
+          await fs.writeFile(fallbackPath, serializedCache, 'utf8');
+        } catch (fallbackErr) {
+          console.warn('Audio cache fallback persistence failed:', fallbackErr);
+        }
+      } else {
+        console.warn('Audio cache persistence failed:', err);
+      }
+    }
   }
 
   if (shouldCancel?.()) {

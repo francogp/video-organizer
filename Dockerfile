@@ -16,7 +16,7 @@ RUN ./node_modules/.bin/vp build
 
 FROM node:26-alpine AS runtime
 
-RUN apk add --no-cache ffmpeg ca-certificates
+RUN apk add --no-cache ffmpeg ca-certificates su-exec
 
 WORKDIR /app
 
@@ -35,4 +35,4 @@ EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
   CMD node -e "fetch('http://127.0.0.1:' + (process.env.APP_PORT || '3000') + '/api/state').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
 
-CMD ["node", "src/server/index.ts"]
+CMD ["sh", "-c", "cfg=\"${CONFIG_DIR:-/config}\"; uid=\"${PUID:-1000}\"; gid=\"${PGID:-1000}\"; if [ \"$(id -u)\" = \"0\" ]; then mkdir -p \"$cfg\" && chown \"$uid:$gid\" \"$cfg\"; exec su-exec \"$uid:$gid\" node src/server/index.ts; fi; exec node src/server/index.ts"]

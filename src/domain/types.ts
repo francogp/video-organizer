@@ -272,6 +272,7 @@ export interface ActiveJobProgress {
   readonly totalItems: number;
   readonly completedItems: number;
   readonly currentItemId?: ItemId;
+  readonly currentFile?: string;
   readonly currentPercent: number;
   readonly stage?: JobStageKind;
   readonly stageLabel?: string;
@@ -339,6 +340,8 @@ export interface VerifierProgress {
   readonly total: number;
   readonly percent: number;
   readonly stageLabel: string;
+  readonly currentFile?: string;
+  readonly etaSeconds?: number;
 }
 
 export interface VerifierState {
@@ -370,6 +373,7 @@ export interface OrganizerStatePayload {
 export interface SseProgressEvent {
   readonly jobId: JobId;
   readonly itemId?: ItemId;
+  readonly currentFile?: string;
   readonly totalItems?: number;
   readonly completedItems?: number;
   readonly percent: number;

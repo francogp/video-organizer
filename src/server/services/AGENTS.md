@@ -15,6 +15,8 @@ Backend Maintainers.
 - Cooperative job cancellation (`Cancel Job`): `scanInputDirectory` and `enrichItemsWithAudioAnalysis` accept `shouldCancel` and `registerChild`, return only completed items, persist partial audio cache, and `jobRunner.ts` `unlock()` awaits `#activeRunPromise` and transitions to `READY` when processed items exist.
 - Automatic animation library reclassification: `jobRunner.ts` (`resolveCategoryFromMetadata`) updates `category` between standard (`Movies`/`Series`) and animated (`Animated Movies`/`Animated Series`) both during `#executeScan` and when applying manual metadata selection/search patches (`#applyPatchToItem`).
 - `libraryVerifierService.ts` classifies recursively empty folders as `Empty directory` whose remediation is direct deletion rather than migration or rename.
+- `JobRunner` must update `activeJob` and emit SSE `progress` events through a single synchronized helper (`#updateProgress`) keeping `stageLabel` (step/count) separate from `currentFile`, so parallel `Verifier` state broadcasts never cause UI progress flickering.
+- Disk caches in `CONFIG_DIR` (`metadata-cache.json`, `audio-cache.json`) are best-effort: on `EACCES`/`EPERM`, services must log a single diagnostic warning and fall back to `os.tmpdir()` instead of aborting scans or spamming `STDERR`; Docker entrypoint permission adjustments (`su-exec`) must target `CONFIG_DIR` exclusively and never mutate permissions under `/data/*`.
 
 ## Key Files
 

@@ -211,6 +211,21 @@ export class JobRunner {
     }
   }
 
+  #updateProgress(evt: SseProgressEvent): void {
+    this.#activeJob = {
+      jobId: evt.jobId,
+      totalItems: evt.totalItems ?? this.#activeJob?.totalItems ?? 0,
+      completedItems: evt.completedItems ?? this.#activeJob?.completedItems ?? 0,
+      currentItemId: evt.itemId,
+      currentFile: evt.currentFile,
+      currentPercent: evt.percent,
+      stage: evt.stage,
+      stageLabel: evt.stageLabel,
+      etaSeconds: evt.etaSeconds
+    };
+    this.#emitProgress(evt);
+  }
+
   #emitLog(level: LogLevel, message: string): void {
     const evt: SseLogEvent = { level, message, timestamp: Temporal.Now.instant().toString() };
     this.#recentLogs.push(evt);
@@ -333,19 +348,10 @@ export class JobRunner {
             effectiveFraction > 0.01 && completed < total && elapsedSec >= 1
               ? Math.max(0, Math.round((elapsedSec * (1 - effectiveFraction)) / effectiveFraction))
               : undefined;
-          this.#activeJob = {
-            jobId: scanJobId,
-            totalItems: total,
-            completedItems: completed,
-            currentItemId: item.id,
-            currentPercent: percent,
-            stage: 'scanning',
-            stageLabel: `Analyzing audio (${String(completed)}/${String(total)}): ${item.fileName}`,
-            etaSeconds
-          };
-          this.#emitProgress({
+          this.#updateProgress({
             jobId: scanJobId,
             itemId: item.id,
+            currentFile: item.fileName,
             totalItems: total,
             completedItems: completed,
             percent,
@@ -851,20 +857,11 @@ export class JobRunner {
       const percent = Math.round(sumPct / includedTracks.length);
       const activeEtas = trackEtas.filter((eta): eta is number => eta !== undefined);
       const etaSeconds = activeEtas.length > 0 ? Math.max(...activeEtas) : undefined;
-      const stageLabel = `Loudnorm Pass 1/2 (${String(completedTracks)}/${String(includedTracks.length)} tracks) · ${item.fileName}`;
-      this.#activeJob = {
-        jobId,
-        totalItems,
-        completedItems,
-        currentItemId: item.id,
-        currentPercent: percent,
-        stage: 'remuxing',
-        stageLabel,
-        etaSeconds
-      };
-      this.#emitProgress({
+      const stageLabel = `Loudnorm Pass 1/2 (${String(completedTracks)}/${String(includedTracks.length)} tracks)`;
+      this.#updateProgress({
         jobId,
         itemId: item.id,
+        currentFile: item.fileName,
         totalItems,
         completedItems,
         percent,
@@ -965,9 +962,10 @@ export class JobRunner {
           totalItems: toProcess.length,
           completedItems: idx,
           currentItemId: item.id,
+          currentFile: item.fileName,
           currentPercent: 0,
           stage: 'remuxing',
-          stageLabel: `Remuxing ${item.fileName}`
+          stageLabel: 'Remuxing'
         };
         this.#emitState();
         this.#emitLog('info', `Remuxing ${item.fileName} -> ${path.basename(destPath)}`);
@@ -985,27 +983,16 @@ export class JobRunner {
             : undefined;
 
         const remuxStageLabel =
-          norm?.mode === 'loudnorm'
-            ? `Loudnorm Pass 2/2 (Remuxing) · ${item.fileName}`
-            : `Remuxing · ${item.fileName}`;
+          norm?.mode === 'loudnorm' ? 'Loudnorm Pass 2/2 (Remuxing)' : 'Remuxing';
         const args = buildFfmpegRemuxArgs(item, tempMkvPath, subInputs, loudnormByStreamOrder);
         await runFfmpegRemux(
           args,
           item.probe.durationSeconds,
           (percent, etaSeconds): void => {
-            this.#activeJob = {
-              jobId,
-              totalItems: toProcess.length,
-              completedItems: idx,
-              currentItemId: item.id,
-              currentPercent: percent,
-              stage: 'remuxing',
-              stageLabel: remuxStageLabel,
-              etaSeconds
-            };
-            this.#emitProgress({
+            this.#updateProgress({
               jobId,
               itemId: item.id,
+              currentFile: item.fileName,
               totalItems: toProcess.length,
               completedItems: idx,
               percent,
@@ -1022,65 +1009,42 @@ export class JobRunner {
           return;
         }
 
-        this.#activeJob = {
-          jobId,
-          totalItems: toProcess.length,
-          completedItems: idx,
-          currentItemId: item.id,
-          currentPercent: 0,
-          stage: 'verifying',
-          stageLabel: `Verifying ${path.basename(destPath)}`
-        };
-        this.#emitProgress({
+        const destFileName = path.basename(destPath);
+        this.#updateProgress({
           jobId,
           itemId: item.id,
+          currentFile: destFileName,
           totalItems: toProcess.length,
           completedItems: idx,
           percent: 0,
           stage: 'verifying',
-          stageLabel: `Verifying ${path.basename(destPath)}`
+          stageLabel: 'Verifying'
         });
         await probeMedia(tempMkvPath);
 
-        this.#activeJob = {
-          jobId,
-          totalItems: toProcess.length,
-          completedItems: idx,
-          currentItemId: item.id,
-          currentPercent: 0,
-          stage: 'moving',
-          stageLabel: `Moving ${path.basename(destPath)}`
-        };
-        this.#emitProgress({
+        this.#updateProgress({
           jobId,
           itemId: item.id,
+          currentFile: destFileName,
           totalItems: toProcess.length,
           completedItems: idx,
           percent: 0,
           stage: 'moving',
-          stageLabel: `Moving ${path.basename(destPath)}`
+          stageLabel: 'Moving'
         });
         this.#emitLog('info', `Moving ${path.basename(destPath)} to ${item.category}`);
 
         const allowOverwrite = conflictResolutions[item.id] === 'overwrite';
         await moveTempOutputFile(tempMkvPath, destPath, allowOverwrite, (movePercent): void => {
-          this.#activeJob = {
-            jobId,
-            totalItems: toProcess.length,
-            completedItems: idx,
-            currentItemId: item.id,
-            currentPercent: movePercent,
-            stage: 'moving',
-            stageLabel: `Moving ${path.basename(destPath)}`
-          };
-          this.#emitProgress({
+          this.#updateProgress({
             jobId,
             itemId: item.id,
+            currentFile: destFileName,
             totalItems: toProcess.length,
             completedItems: idx,
             percent: movePercent,
             stage: 'moving',
-            stageLabel: `Moving ${path.basename(destPath)}`
+            stageLabel: 'Moving'
           });
         });
 
@@ -1090,23 +1054,15 @@ export class JobRunner {
         }
 
         movedItems.push(item);
-        this.#activeJob = {
-          jobId,
-          totalItems: toProcess.length,
-          completedItems: idx + 1,
-          currentItemId: item.id,
-          currentPercent: PERCENT_MAX,
-          stage: 'moving',
-          stageLabel: `Moved ${path.basename(destPath)}`
-        };
-        this.#emitProgress({
+        this.#updateProgress({
           jobId,
           itemId: item.id,
+          currentFile: destFileName,
           totalItems: toProcess.length,
           completedItems: idx + 1,
           percent: PERCENT_MAX,
           stage: 'moving',
-          stageLabel: `Moved ${path.basename(destPath)}`
+          stageLabel: 'Moved'
         });
       }
 
@@ -1126,21 +1082,14 @@ export class JobRunner {
         (cleaned, total, fileName): void => {
           const cleanPercent =
             total > 0 ? Math.round((cleaned / total) * PERCENT_MAX) : PERCENT_MAX;
-          this.#activeJob = {
+          this.#updateProgress({
             jobId,
-            totalItems: total,
-            completedItems: cleaned,
-            currentPercent: cleanPercent,
-            stage: 'cleanup',
-            stageLabel: `Cleaning up ${fileName}`
-          };
-          this.#emitProgress({
-            jobId,
+            currentFile: fileName,
             totalItems: total,
             completedItems: cleaned,
             percent: cleanPercent,
             stage: 'cleanup',
-            stageLabel: `Cleaning up ${fileName}`
+            stageLabel: 'Cleaning up'
           });
         }
       );

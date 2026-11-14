@@ -225,10 +225,16 @@ async function handleCancelJob(): Promise<void> {
 
 const activeStageParts = computed<{ readonly step: string; readonly fileName: string }>(() => {
   const job = store.activeJob;
-  if (!job?.stageLabel) {
+  if (!job?.stageLabel && !job?.currentFile) {
     return { step: '', fileName: '' };
   }
-  const label = job.stageLabel;
+  const label = job.stageLabel ?? '';
+  if (job.currentFile) {
+    return {
+      step: label,
+      fileName: job.currentFile
+    };
+  }
   const dotIdx = label.lastIndexOf(' · ');
   if (dotIdx !== -1) {
     return {

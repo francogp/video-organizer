@@ -57,15 +57,38 @@ export interface SeasonDirFiles {
 
 /** Parses metadata tags, year, and clean title from a Plex library root folder name. */
 export function parseLibraryRootName(folderName: string): ParsedLibraryRoot {
-  const tvdbMatch = TVDB_TAG_REGEX.exec(folderName);
-  const imdbMatch = IMDB_TAG_REGEX.exec(folderName);
-  const tmdbMatch = TMDB_TAG_REGEX.exec(folderName);
-  const editionMatch = EDITION_TAG_REGEX.exec(folderName);
+  const trailingExt = path.extname(folderName).toLowerCase();
+  const normalizedName = VIDEO_EXTENSION_SET.has(trailingExt as VideoExtension)
+    ? folderName.slice(0, -trailingExt.length).trimEnd()
+    : folderName;
+
+  const firstBracketMatch = /\[([^\]]+)\]/.exec(normalizedName);
+  const firstTrailingBracketIndex =
+    firstBracketMatch && firstBracketMatch.index > 0 ? firstBracketMatch.index : undefined;
+
+  const metaStartCandidates = [
+    TVDB_TAG_REGEX.exec(normalizedName)?.index,
+    IMDB_TAG_REGEX.exec(normalizedName)?.index,
+    TMDB_TAG_REGEX.exec(normalizedName)?.index,
+    EDITION_TAG_REGEX.exec(normalizedName)?.index,
+    YEAR_PAREN_REGEX.exec(normalizedName)?.index,
+    firstTrailingBracketIndex
+  ].filter((idx): idx is number => typeof idx === 'number');
+
+  const metaStartIndex =
+    metaStartCandidates.length > 0 ? Math.min(...metaStartCandidates) : normalizedName.length;
+  const titlePart = normalizedName.slice(0, metaStartIndex);
+  const metaPart = normalizedName.slice(metaStartIndex);
+
+  const tvdbMatch = TVDB_TAG_REGEX.exec(metaPart);
+  const imdbMatch = IMDB_TAG_REGEX.exec(metaPart);
+  const tmdbMatch = TMDB_TAG_REGEX.exec(metaPart);
+  const editionMatch = EDITION_TAG_REGEX.exec(metaPart);
 
   const bracketTags: string[] = [];
   let bracketMatch: RegExpExecArray | null;
   BRACKET_TAG_REGEX.lastIndex = 0;
-  while ((bracketMatch = BRACKET_TAG_REGEX.exec(folderName)) !== null) {
+  while ((bracketMatch = BRACKET_TAG_REGEX.exec(metaPart)) !== null) {
     const inner = bracketMatch[1]?.trim();
     if (inner) {
       for (const part of inner.split(',')) {
@@ -77,22 +100,14 @@ export function parseLibraryRootName(folderName: string): ParsedLibraryRoot {
     }
   }
 
-  const yearMatch = YEAR_PAREN_REGEX.exec(folderName);
+  const yearMatch = YEAR_PAREN_REGEX.exec(metaPart);
   const parsedYear = yearMatch?.[1] ? Number(yearMatch[1]) : undefined;
   const year =
     parsedYear && parsedYear >= MIN_VALID_YEAR && parsedYear <= MAX_VALID_YEAR
       ? parsedYear
       : undefined;
 
-  const cleanTitle = folderName
-    .replace(TVDB_TAG_REGEX, '')
-    .replace(IMDB_TAG_REGEX, '')
-    .replace(TMDB_TAG_REGEX, '')
-    .replace(EDITION_TAG_REGEX, '')
-    .replace(BRACKET_TAG_REGEX, '')
-    .replace(YEAR_PAREN_REGEX, '')
-    .replace(/\s+/g, ' ')
-    .trim();
+  const cleanTitle = titlePart.replace(/\s+/g, ' ').trim();
 
   return {
     rawName: folderName,

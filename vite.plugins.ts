@@ -12,7 +12,8 @@ const MIN_COMPRESS_BYTES = 512;
 function resolveAppSemver(): string {
   const raw = fs.readFileSync(path.resolve(process.cwd(), 'package.json'), 'utf8');
   const parsed = JSON.parse(raw) as { version?: string };
-  const base = (parsed.version ?? '0.0.0').split('+')[0]?.trim() ?? '0.0.0';
+  const rawSemver = (parsed.version ?? '0.0.0').split('+')[0]?.trim() ?? '0.0.0';
+  const base = rawSemver.replace(/-build\..*$/, '');
   return `v${base}`;
 }
 
